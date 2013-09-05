@@ -1,37 +1,45 @@
 //CRC220.C
 //Version: 1.0 - 25/2/2005
 //Version: 1.01 - 
-//Version: 1.02 - 14/11/2006 - Random card option (switch 7 on)
-//Version: 1.03 - 10/1/07 - Fixed atb
-//Version: 1.04 - 2/3/07 - Fixed random cards > 5 digits (int16 instead of int32)
+//Version: 1.02 - 14/11/06 - Random card option (switch 7 on)
+//Version: 1.03 - 10/01/07 - Fixed atb
+//Version: 1.04 - 02/03/07 - Fixed random cards > 5 digits (int16 instead of int32)
 //Version: 1.05 -
-//Version: 1.06 - 5/6/07 - Arming inputs (aux in2 = rdr1, aux in3 = rdr2)
-//Version: 1.07 - 14/1/08 - Inputs 4-8 implented
+//Version: 1.06 - 05/06/07 - Arming inputs (aux in2 = rdr1, aux in3 = rdr2)
+//Version: 1.07 - 14/01/08 - Inputs 4-8 implented
 //Version: 1.08 - 25/11/08 - ATB fixed, speedup of reader io, 
-//							aux-out1 on if tamper or door forced or door left open
-//							atb reset now also resets atb
-//							outputs can be controlled from PC 
-//Version: 1.09 - 5/12/08 -
-//Version: 1.10 - 10/3/09 - Rework door monitoring etc.
-//Version: 2.00 - 11/3/09 - PIN + Card added
-//Version: 2.01 - 6/7/09  - Access level 0, card always rejected (accesslevel)
-//Version: 2.02 - 22/9/09 - Single door mode, buddy mode, Open all doors on input 4
-//Version: 2.03 - 18/1/10 - removed call to iocheck for auxin 7 and 8
-//Version: 2.04 - 8/2/10  - Auxo1 = door1 alarm, Auxo2 = door2 alarm
-//							Rdr1 cancels door 1 alarm, Rdr2 cancels door 2 alarm
-//Version: 2.06 - 26/5/10 - Passback added
-//Version: 2.07 - 9/7/10  - Fixed error in single door mode on reader 2 still active
-//							when door open
-//Version: 2.08 - 13/9/10 - Fixed Relay 2 0.5 second option 
+//						 	 aux-out1 on if tamper or door forced or door left open
+//							 atb reset now also resets atb
+//							 outputs can be controlled from PC 
+//Version: 1.09 - 05/12/08 -
+//Version: 1.10 - 10/03/09 - Rework door monitoring etc.
+//Version: 2.00 - 11/03/09 - PIN + Card added
+//Version: 2.01 - 06/07/09 - Access level 0, card always rejected (accesslevel)
+//Version: 2.02 - 22/09/09 - Single door mode, buddy mode, Open all doors on input 4
+//Version: 2.03 - 18/01/10 - removed call to iocheck for auxin 7 and 8
+//Version: 2.04 - 08/02/10 - Auxo1 = door1 alarm, Auxo2 = door2 alarm
+//							 Rdr1 cancels door 1 alarm, Rdr2 cancels door 2 alarm
+//Version: 2.06 - 26/05/10 - Passback added
+//Version: 2.07 - 09/07/10 - Fixed error in single door mode on reader 2 still active
+//							 when door open
+//Version: 2.08 - 13/09/10 - Fixed Relay 2 0.5 second option 
 //Version: 2.09 - 21/12/10 - Option to compile for single door only. (define ONEDOOR)
-//Version: 2.10 - 16/3/11 - Buddy mode now sends both card numbers to host.
-//							Improvements for TCP timing.
-//Version: 2.11 - 4/10/11 - Latching output relay added
-//						  	Muster controller option added.
+//Version: 2.10 - 16/03/11 - Buddy mode now sends both card numbers to host.
+//							 Improvements for TCP timing.
+//Version: 2.11 - 04/10/11 - Latching output relay added
+//						  	 Muster controller option added.
+//Version: 2.12 - 01/03/12 - 16 door open timezones. Anti-tailback off option
+//							 Latching output changed - latch cards presented 3x will latch
+//							 Door Normal will now cancel door alarm providing door is closed
+//							 Changed relay behaviour. Relays will operate regardless of door 
+//							 state providing card/access level/time period/arming all valid
+//							 Fixed reader 2 LED operation errors in single door mode
+//							 Fixed latching open when not armed
+//							 Door open timezone now closes a door set/latched open
 
 #include <18F6722.H>
 
-#define	ONEDOOR
+//#define	ONEDOOR
 
 #if defined(ONEDOOR)
 #define MODVER 5
@@ -46,10 +54,10 @@
 #byte	porte		=	0x0f84
 #byte	portf		=	0x0f85
 
-#byte	RCREG		=	0x0FAE	//uart receive reg
-#byte	INDF0		=	0x0FEF	//indirect reg
+#byte	RCREG		=	0x0FAE		//uart receive reg
+#byte	INDF0		=	0x0FEF		//indirect reg
 #byte	RCON		=	0x0FD0
-#byte	LDVCON		=	0x0FD2	//low voltage detect	
+#byte	LDVCON		=	0x0FD2		//low voltage detect	
 #byte	STATUS		=	0x0FD8
 #byte	FSR0H		=	0x0FEA
 #byte	FSR0L		=	0x0FE9
@@ -65,15 +73,15 @@
 #byte	RCSTA		=	0x0F8B
 #byte	TXSTA		=	0x0FAC
 
-#byte	_pir1		= 	0x0F9E	//PIR1 reg
+#byte	_pir1		= 	0x0F9E		//PIR1 reg
 
 #byte	INTCON		=	0x0FF2
 #byte	INTCON2		=	0x0FF1
 #byte	INTCON3		=	0x0FF0
 
-#bit	_carry		= STATUS.0
-#bit	_zero		= STATUS.2
-#bit	_rp0		= STATUS.5	//bank select 0
+#bit	_carry		= 	STATUS.0
+#bit	_zero		= 	STATUS.2
+#bit	_rp0		= 	STATUS.5	//bank select 0
 
 #bit	rel1		=	porta.5
 
@@ -85,7 +93,7 @@
 
 
 #define major_ver	0x02			//software version
-#define minor_ver	11
+#define minor_ver	12
 
 #use delay(clock=40000000, RESTART_WDT)
 #use rs232(baud = 9600, xmit = PIN_C6, rcv = PIN_C7, RESTART_WDT, ERRORS)
@@ -105,10 +113,10 @@
 #include <string.h>
 #include <stdlib.h>
 #include "mem200.c"
-#include "25C256spi.c"
+#include "25C512spi.c"
 //
 #define	relay1	PIN_A5			//relay 1
-//#define	relay2	PIN_A4			//relay 2 (Ver 1.1)
+//#define	relay2	PIN_A4		//relay 2 (Ver 1.1)
 #define relay2	PIN_C1			//relay 2 (Ver 1.2)
 
 #define rdr2out	PIN_B0			//reader2 out clk
@@ -145,18 +153,18 @@
 
 
 #define	SDOOR	PIN_F6			//single door
-//#define	wieg	PIN_F7			//sw8 wiegand if on
+//#define	wieg	PIN_F7		//sw8 wiegand if on
 
-#define	KCARD	0x00		//aborted due to card
-#define	KGOOD	0x01		//good number
-#define	KPROG	0x02		//aborted due to prog key
-#define	KZERO	0x03		//CR pressed, no data
+#define	KCARD	0x00			//aborted due to card
+#define	KGOOD	0x01			//good number
+#define	KPROG	0x02			//aborted due to prog key
+#define	KZERO	0x03			//CR pressed, no data
 
-#define	STX	0x02		//start of text
-#define	ETX	0x03		//end of text
-#define	ACK	0x06		//acknowledge
-#define	NAK	0x15		//not acknowledge
-#define	CR	0x0D		//carriage return
+#define	STX	0x02				//start of text
+#define	ETX	0x03				//end of text
+#define	ACK	0x06				//acknowledge
+#define	NAK	0x15				//not acknowledge
+#define	CR	0x0D				//carriage return
 
 #define DBOUNCE		15			//input debounce value
 //card database
@@ -284,8 +292,8 @@ enum RDR_STATS {RDR_NO, RDR_PIN};
 
 #define	E1_LATO		0x3B		//Reader 1 latched open
 #define	E1_LATC		0x3C		//Reader 1 latched closed
-#define	E2_LATO		0x3D		//Reader 1 latched open
-#define	E2_LATC		0x3E		//Reader 1 latched closed
+#define	E2_LATO		0x3D		//Reader 2 latched open
+#define	E2_LATC		0x3E		//Reader 2 latched closed
 
 #define	E1_ACC		0x41		//reader 1 accept
 #define	E1_AL		0x42		//reader 1 access-level
@@ -465,6 +473,30 @@ enum RDR_STATS {RDR_NO, RDR_PIN};
 #define	ATB27		CBASE + 395
 #define	ATB28		CBASE + 400
 #define	ATB29		CBASE + 405
+//Door open timezones 
+#define	DTZ1		CBASE + 410		//timezone 1 
+#define	DTZ2		CBASE + 415		//timezone 2 
+#define	DTZ3		CBASE + 420		//timezone 3 
+#define	DTZ4		CBASE + 425		//timezone 4 
+#define	DTZ5		CBASE + 430		//timezone 5 
+#define	DTZ6		CBASE + 435		//timezone 6 
+#define	DTZ7		CBASE + 440		//timezone 7 
+#define	DTZ8		CBASE + 445		//timezone 8 
+#define	DTZ9		CBASE + 450		//timezone 9 
+#define	DTZ10		CBASE + 455		//timezone 10 
+#define	DTZ11		CBASE + 460		//timezone 11 
+#define	DTZ12		CBASE + 465		//timezone 12 
+#define	DTZ13		CBASE + 470		//timezone 13 
+#define	DTZ14		CBASE + 475		//timezone 14 
+#define	DTZ15		CBASE + 480		//timezone 15 
+#define	DTZ16		CBASE + 485		//timezone 16 
+#define DTZSIZE		5				//size of each timezone
+#define DTZQTY		16				//number of timezones
+//Door Access Levels
+#define	DACC0		CBASE + 490		//Accesslevel 0
+#define	DACC1		CBASE + 492		//Accesslevel 1
+#define DACCSIZE	2				//size of each accesslevel
+#define	DACCQTY		2				//number of accesslevels
 
 //IO settings
 #define INP1		CBASE + 320		//input 1 settings
@@ -504,6 +536,11 @@ enum INP_TYPES {INP_NO, INP_TAMP, INP_ARM, INP_SW, INP_PULSE, INP_REP};
 #define	CRD_PASS	0x01		//card passback
 #define	CRD_CAP0	0x02		//reader 1 capture
 #define	CRD_CAP1	0x03		//reader 2 capture
+//Latch door from 3x card present
+#define	SECONDREAD1	0x01		//card previously read once reader 1
+#define THIRDREAD1	0x02		//card previously read twice reader 1
+#define	SECONDREAD2	0x01		//card previously read once reader 2
+#define THIRDREAD2	0x02		//card previously read twice reader 2
 
 union join16
 {
@@ -527,13 +564,18 @@ char rex1cnt, rex2cnt, door1cnt, door2cnt, node, drmon1, drmon2;
 short tout, t2tout, rex1on, rex2on, evtson, clrcrd;
 short r1tout, r2tout, dr1tout, dr2tout, alarmtout, arm1, arm2;
 static char cardfmt, pollnext, pollseq, onesec, tmr2tick, cap1tick, cap2tick;
-char dr1tzone, dr2tzone, dr1stat, dr2stat, mode1, mode2, dr1tick, dr2tick;
+char dr1stat, dr2stat, mode1, mode2, dr1tick, dr2tick;
 char alarmtick;
 char bf[128], in1cnt, in2cnt, in3cnt, in4cnt, in5cnt, in6cnt, in7cnt, in8cnt, instat;
 char tbuf[256], evtsent;
 char buff[MAGDIGS + 1];    
 char apb, curhour, newhour;
 long drtc;
+int32 lastread1, lastread2;
+int readcount1, readcount2, readtimer1, readtimer2;
+char latchrly1, latchrly2, latchtime;
+char flashcnt, flashdelay;
+char buddytime;
 
 struct evtst
 {
@@ -616,6 +658,8 @@ char check_apb(char rdr);
 char buddycheck(char rdr);
 void ToggleDoor(unsigned char dr);
 
+char dr1atg, dr2atg;
+
 //---------------------------------------------------------------------
 //Timer 1 interrupt routine (52mS)
 //---------------------------------------------------------------------
@@ -659,10 +703,13 @@ char x;
 		}
 	if (!--pin1tick) 
 		{
-		pin1stat = PIN_NO;	//PIN 1 time-out
+		pin1stat = PIN_NO;				//PIN 1 time-out
 		}
 	if (!--pin2tick) pin2stat = PIN_NO;	//PIN 2 time-out
 	if (!--alarmtick) alarmtout = true;
+
+	readtimer1++;						//Timers for 3x swipe = latch lock
+	readtimer2++;
 }
 //---------------------------------------------------------------------
 //Timer 2 interrupt routine 2.4mS
@@ -673,7 +720,7 @@ void timer2_isr(void)
 
 	if (rxstat == RX_PRO) 
 		{
-		if (!--rxtick) rxstat = RX_NO;	//Serial rx timer
+		if (!--rxtick) rxstat = RX_NO;		//Serial rx timer
 		}
 	if (!--tmr2tick)						//500mS counter
 		{
@@ -720,7 +767,7 @@ void ext0_isr(void)
 void ext1_isr(void)
 {
 
-	if (cardfmt == FMT_MAG)			//mag card
+	if (cardfmt == FMT_MAG)					//mag card
 		{
 		if (rd2istat == CARD_NO)			//0 = rdr2 idle
 			{
@@ -745,7 +792,7 @@ void ext1_isr(void)
 			}
 		}
 	else
-		{				//wiegand card
+		{									//wiegand card
 		if (rd2istat == CARD_NO)			//0 = no rdr2 data
 			{
 			rd2ip = rd2idat;
@@ -801,13 +848,13 @@ void ext2_isr(void)
 void ext3_isr(void)
 {
 
-	if (cardfmt == FMT_MAG)			//mag card
+	if (cardfmt == FMT_MAG)					//mag card
 		{
 		if (rd1istat == CARD_NO)			//0 = rdr1 idle
 			{
 			rd1ip = rd1idat;
 			if (!input(rdr1dat)) rd1iax = 0x01;	//one bit
-			else rd1iax = 0x00;		//zero bit
+			else rd1iax = 0x00;				//zero bit
 			rd1ibits = 1;
 			rd1itick = 2;					//reader 1 timer (300mS)
 			rd1istat = CARD_PRO;			//card in progress
@@ -826,7 +873,7 @@ void ext3_isr(void)
 			}
 		}
 	else
-		{				//wiegand card
+		{									//wiegand card
 		if (rd1istat == CARD_NO)			//0 = no rdr1 data
 			{
 			rd1ip = rd1idat;
@@ -840,7 +887,7 @@ void ext3_isr(void)
 			if (rd1ibits < 80)
 				{
 				rd1iax <<= 1;
-				bit_set(rd1iax, 0);	//one bit
+				bit_set(rd1iax, 0);			//one bit
 				++rd1ibits;
 				if (!( rd1ibits & 0x07)) *rd1ip++ = rd1iax;
 				rd1itick = 2;
@@ -867,7 +914,7 @@ char ch;
 		else 
 			{
 			rxcnt = 1;
-			rxtick = 10;							//serial rx time-out
+			rxtick = 10;						//serial rx time-out
 			rxstat = RX_PRO;					//message in progress
 			}
 		}
@@ -879,7 +926,7 @@ char ch;
 			}
 		if (rxcnt < 250) rxdat[rxcnt] = ch;
 		if (rxcnt > rxsize)	
-	rxstat = RX_DATA;
+		rxstat = RX_DATA;
 		++rxcnt;
 		rxtick = 10;							//serial rx time-out
 		}
@@ -895,7 +942,7 @@ char ch;
 			{
 			rxstat = RX_PRO;					//message in progress
 			rxcnt = 0;
-			rxtick = 10;							//serial rx time-out
+			rxtick = 10;						//serial rx time-out
 			}
 		}
 	else if (rxstat == RX_PRO)					//if message in progress
@@ -964,19 +1011,19 @@ static char oldmin, oldio;
 	pin1stat = PIN_NO;							//clear pin1 status
 	pin2stat = PIN_NO;							//clear pin2 status
 //setup rex regs
-	rex1on = false;									//no rex
+	rex1on = false;								//no rex
 	rex1cnt = DBOUNCE;
 	rex2on = false;
 	rex2cnt = DBOUNCE;                        
 	door1cnt = DBOUNCE;
 	door2cnt = DBOUNCE;
-	mode1 = MD_CARD;		//card only
+	mode1 = MD_CARD;							//card only
 	mode2 = MD_CARD;
-	dr1stat = DOOR_NO;		//no door activity
+	dr1stat = DOOR_NO;							//no door activity
 	dr2stat = DOOR_NO;
 
 	rxstat = RX_NO;
-    init_ext_eeprom();		//initialize eeprom
+    init_ext_eeprom();							//initialize eeprom
 	do
 		{
 		x = read_ext_eeprom(MEM, MTEST);
@@ -987,16 +1034,16 @@ static char oldmin, oldio;
 	output_high(led);
 
 	init_spi_eeprom();
-	init_rtc();     		//initialize real time clock
-	initcrc();				//initialize controller
+	init_rtc();     							//initialize real time clock
+	initcrc();									//initialize controller
 	setup_readers();
 //	output_high(led);
 
 	onesec = 0;
 
-	output_low(txon);			//RS485 = RX
-//	output_low(led);			//led off
-	newhour = 99;				//force a apb reset
+	output_low(txon);							//RS485 = RX
+//	output_low(led);							//led off
+	newhour = 99;								//force a apb reset
 	if (!input(PIN_F5))
 		{
 		output_high(led); 
@@ -1013,10 +1060,24 @@ static char oldmin, oldio;
 #if defined(ONEDOOR)
 	crcflags |= 0x02;
 #endif
-	lastcard1.card = 0x00000000;					//last card used
+	lastcard1.card = 0x00000000;				//last card used
 	lastcard2.card = 0x00000000;
-	ioinit();				//initialize io
-    while (TRUE)
+//Setup variables for 3x swipe = latch
+	lastread1 = 0x00000000;
+	lastread2 = 0x00000000;
+	readcount1 = 0x00;
+	readcount2 = 0x00;
+	readtimer1 = 0;
+	readtimer2 = 0;
+	latchrly1 = 0;
+	latchrly2 = 0;
+	latchtime = 25;
+
+	buddytime = 10;
+
+	ioinit();									//initialize io
+    
+while (true)
     	{
         restart_wdt();
 //check for illegal pin1stat
@@ -1025,83 +1086,98 @@ static char oldmin, oldio;
 		if (pin2stat > PIN_RDY) pin2stat = PIN_NO;
 //check door modes
 		if ((dr1stat == DOOR_TZOP) || (dr1stat == DOOR_SOP))
-			{		//if open on timezone or set open
+			{									//if open on timezone or set open
 			output_high(relay1);
 			output_high(gled1);
+			if (crcflags & 0x02) output_high(gled2);
 			}
 		if ((dr2stat == DOOR_TZOP) || (dr2stat == DOOR_SOP))
-			{		//if open on timezone or set open
+			{									//if open on timezone or set open
 			output_high(relay2);
 			output_high(gled2);
 			}
 //check reader1 in
-		if (rd1istat == CARD_RDY)	//reader1 in
+		if (rd1istat == CARD_RDY)				//reader1 in
 			{
-//			if ((dr1stat == DOOR_NO) && input(auxi2))
-			if (cardfmt == FMT_MAG) c = magcard(1);
-			else c = wiegcard(1);
-			if (c == RD_OK)
+			if (!input(auxi2)) rd1istat = CARD_NO;	//not armed, reset rd1istat or card read while not armed gets processed once armed
+			else								// is armed
 				{
-				evt.evt = check_card(1);
-				if (evt.evt == E1_PIN)
+				if (cardfmt == FMT_MAG) c = magcard(1);
+				else c = wiegcard(1);
+				if (c == RD_OK)
 					{
-					if (pin1stat == PIN_RDY)
+					evt.evt = check_card(1);
+					if (evt.evt == E1_PIN)
 						{
-						if (chkpin(pin1dat))
+						if (pin1stat == PIN_RDY)
 							{
-							evt.evt = E1_ACC;
+							if (chkpin(pin1dat)) evt.evt = E1_ACC;
+							else 
+								{
+								evt.evt = E1_WPIN;		//wrong pin
+								bit_clear(crdst.data, CRD_CAP0);	//do not capture
+								}
 							}
 						else 
 							{
-							evt.evt = E1_WPIN;		//wrong pin
+							evt.evt = E1_WPIN;			//wrong pin
 							bit_clear(crdst.data, CRD_CAP0);	//do not capture
 							}
 						}
-					else 
+					if (evt.evt == E1_ACC)		//if card ok
 						{
-						evt.evt = E1_WPIN;			//wrong pin
-						bit_clear(crdst.data, CRD_CAP0);	//do not capture
-						}
-					}
-				if (evt.evt == E1_ACC)		//if card ok
-					{
-					if (check_atb(1))				//check atb first
-						{
-						if (check_apb(1))					//anti-passback?
+						if (check_atb(1))				//check atb first
 							{
-							crcflags = read_ext_eeprom(MEM, CTR_FLAGS);
+							if (check_apb(1))					//anti-passback?
+								{
+								crcflags = read_ext_eeprom(MEM, CTR_FLAGS);
 #if defined(ONEDOOR)
-							crcflags |= 0x02;
+								crcflags |= 0x02;
 #endif
-							if (crcflags & 0x04)		//buddy mode?
-								{
-								if (!buddycheck(1)) evt.evt = E1_BUD;
-								}
-							if (evt.evt == E1_ACC)		//card accepted
-								{
-								if (crdst.data & 0x01)	//door latch?
+								if (crcflags & 0x04)		//buddy mode?
 									{
-									if ((dr1stat == DOOR_NO) || (dr1stat == DOOR_SOP) && input(auxi2))
-										{
-										ToggleDoor(1);
-										}
-									else
-										{
-										evt.evt = 0x00;
-										}
+									if (!buddycheck(1)) evt.evt = E1_BUD;
 									}
-								else if ((dr1stat == DOOR_NO) && input(auxi2))
+								if (evt.evt == E1_ACC)		//card accepted
 									{
+									latchrly1 = 0x00;
+									if ((readtimer1 < latchtime) && (evt.card.w == lastread1)) //re-present of a card within time
+										{
+										evt.evt = 0x00;		//no need for multiple 'Granted'
+										switch (readcount1)
+											{
+											case SECONDREAD1:
+												lastread1 = evt.card.w;
+												readcount1++;
+												break;
+											case THIRDREAD1:
+												lastread1 = 0x00000000;
+												latchrly1 = 0x01;
+												readcount1 = 0x00;
+												break;
+											}
+										}
+									else 				 //different to previous read
+										{
+										readcount1 = 0x01;
+										lastread1 = evt.card.w;
+										}
+									readtimer1 = 0;		//reset counter
+//									if ((dr1stat == DOOR_NO) && input(auxi2))  **changed - unlock regardless of door state
 									relay_on(1, 0);
-									if (!input(door1) && !input(auxi1))
+									if (drmon1 != 0)
 										{
-										output_low(auxo1);	//local alarm off
+										if (!input(door1)) output_low(auxo1);	//if door closed turn local alarm off
+										else if ((crcflags & 0x08) == 0x00) evt.evt = 0x00;	//door is open - if not muster controller do not report
 										}
+									if ((dr1stat == DOOR_SOP) && ((crcflags & 0x08) == 0x00)) evt.evt = 0x00; //copes with no door monitoring and toggledoor
+									if ((crdst.data & 0x01) && (latchrly1 == 0x01))	ToggleDoor(1);										
 									}
-								else if ((crcflags & 0x08) == 0x00)	//not Muster reader?
-									{
-									evt.evt = 0x00;	//do not report
-									}
+								}
+							else 
+								{
+								evt.evt = E1_APB;		//apb error
+								bit_clear(crdst.data, CRD_CAP0);	//not capture
 								}
 							}
 						else 
@@ -1110,31 +1186,26 @@ static char oldmin, oldio;
 							bit_clear(crdst.data, CRD_CAP0);	//not capture
 							}
 						}
-					else 
-						{
-						evt.evt = E1_APB;		//apb error
-						bit_clear(crdst.data, CRD_CAP0);	//not capture
-						}
+					if (bit_test(crdst.data, CRD_CAP0))	//capture?
+       					{
+						cap1tick = 2;					//1 second
+           				output_high(rled1);				//capture card
+           				}
+					if (evt.evt != 0x00) store_event();
 					}
-				if (bit_test(crdst.data, CRD_CAP0))	//capture?
-       				{
-					cap1tick = 2;					//1 second
-           			output_high(rled1);				//capture card
-           			}
-				if (evt.evt != 0x00) store_event();
+				else if (c == RD_SITE)
+					{
+					evt.evt = E1_WSITE;	//wrong sitecode
+					store_event();
+					}
+				else if (c == RD_FMT)
+					{ 
+					evt.evt = E1_CFMT;	//card format error
+					store_event();
+       				}
+				pin1stat = PIN_NO;
+        		rd1istat = CARD_NO;
 				}
-			else if (c == RD_SITE)
-				{
-				evt.evt = E1_WSITE;	//wrong sitecode
-				store_event();
-				}
-			else if (c == RD_FMT)
-				{ 
-				evt.evt = E1_CFMT;	//card format error
-				store_event();
-       			}
-			pin1stat = PIN_NO;
-        	rd1istat = CARD_NO;
 			}
 		else if (rd1istat == CARD_PIN)			//pin data
 			{
@@ -1168,18 +1239,13 @@ static char oldmin, oldio;
 //check reader2 in
 		if (rd2istat == CARD_RDY)	//reader2 in
 			{
-			crcflags = read_ext_eeprom(MEM, CTR_FLAGS);
+			if (!input(auxi3)) rd2istat = CARD_NO;	//not armed, reset rd2istat or card read while not armed gets processed once armed
+			else					//is armed
+				{
+				crcflags = read_ext_eeprom(MEM, CTR_FLAGS);
 #if defined(ONEDOOR)
-			crcflags |= 0x02;
+				crcflags |= 0x02;
 #endif
-/*			c = 0;
-			if (crcflags & 0x02)					//if single door
-				{
-				if (dr1stat == DOOR_NO) c = 1;
-				}
-			else if (dr2stat == DOOR_NO) c = 1;
-			if ((c == 1) && input(auxi3))*/
-				{
 				if (cardfmt == FMT_MAG) c = magcard(2);
 				else c = wiegcard(2);
 				if (c == RD_OK)
@@ -1189,10 +1255,7 @@ static char oldmin, oldio;
 						{
 						if (pin2stat == PIN_RDY)
 							{
-							if (chkpin(pin2dat))
-								{
-								evt.evt = E2_ACC;
-								}
+							if (chkpin(pin2dat)) evt.evt = E2_ACC;
 							else 
 								{
 								evt.evt = E2_WPIN;		//wrong pin
@@ -1211,7 +1274,7 @@ static char oldmin, oldio;
 							{
 							if (check_apb(2))					//anti-passback?
 								{
-								if (crcflags & 0x02)					//if single door
+								if (crcflags & 0x02)			//if single door
 									{
 									if (crcflags & 0x04)		//buddy mode?
 										{
@@ -1219,32 +1282,41 @@ static char oldmin, oldio;
 										}
 									if (evt.evt == E2_ACC)
 										{
-										if (crdst.data & 0x01)	//door latch?
+										latchrly1 = 0x00;
+										if (readtimer2 < latchtime && evt.card.w == lastread2) //re-present of a card within time
 											{
-											if ((dr1stat == DOOR_NO) || (dr1stat == DOOR_SOP) && input(auxi2))
+											evt.evt = 0x00;	//no need for multiple 'Granted'
+											switch (readcount2)
 												{
-												ToggleDoor(1);
-												}
-											else
-												{
-												evt.evt = 0x00;
-												}
-											}
-										else if ((dr1stat == DOOR_NO) && input(auxi2))
-											{
-											relay_on(1, 0);
-											if (!input(door1) && !input(auxi1))
-												{
-												output_low(auxo1);	//local alarm off
+												case SECONDREAD2:
+													lastread2 = evt.card.w;
+													readcount2++;
+													break;
+												case THIRDREAD2:
+													lastread2 = 0x00000000;
+													readcount2 = 0x00;
+													latchrly1 = 0x01;
+													break;
 												}
 											}
-										else if ((crcflags & 0x08) == 0x00)	//not Muster reader?
+										else  //different to previous read
 											{
-											evt.evt = 0x00;	//do not report
+											readcount2 = 0x01;
+											lastread2 = evt.card.w;
 											}
+										readtimer2 = 0;	//reset counter
+//										if ((dr1stat == DOOR_NO) && input(auxi2)) **changed - unlock regardless of door state
+										relay_on(1, 0);
+										if (drmon1 != 0)
+											{
+											if (!input(door1)) output_low(auxo1);	//if door closed turn local alarm off
+											else if ((crcflags & 0x08) == 0x00) evt.evt = 0x00;	//door is open - if not muster controller do not report
+											}
+										if ((dr1stat == DOOR_SOP) && ((crcflags & 0x08) == 0x00)) evt.evt = 0x00; //copes with no door monitoring and toggledoor
+										if ((crdst.data & 0x01) && (latchrly1 == 0x01))	ToggleDoor(1);
 										}		
 									}
-								else					//2 door
+								else							//2 door
 									{
 									if (crcflags & 0x04)		//buddy mode?
 										{
@@ -1252,48 +1324,57 @@ static char oldmin, oldio;
 										}
 									if (evt.evt == E2_ACC)
 										{
-										if (crdst.data & 0x01)	//door latch?
+										latchrly2 = 0x00;
+										if (readtimer2 < latchtime && evt.card.w == lastread2) //re-present of a card within time
 											{
-											if ((dr2stat == DOOR_NO) || (dr2stat == DOOR_SOP) && input(auxi3))
+											evt.evt = 0x00;	//no need for multiple 'Granted'
+											switch (readcount2)
 												{
-												ToggleDoor(2);
-												}
-											else
-												{
-												evt.evt = 0x00;
-												}
-											}
-										else if ((dr2stat == DOOR_NO) && input(auxi3))
-											{
-											relay_on(2, 0);
-											if (!input(door2))
-												{
-												output_low(auxo2);	//door2 alarm off
+												case SECONDREAD2:
+													lastread2 = evt.card.w;
+													readcount2++;
+													break;
+												case THIRDREAD2:
+													lastread2 = 0x00000000;
+													readcount2 = 0x00;
+													latchrly2 = 0x01;
+													break;
 												}
 											}
-										else if ((crcflags & 0x08) == 0x00)	//not Muster reader?
+										else  //different to previous read
 											{
-											evt.evt = 0x00;	//do not report
+											readcount2 = 0x01;
+											lastread2 = evt.card.w;
 											}
+										readtimer2 = 0;	//reset counter
+//										if ((dr2stat == DOOR_NO) && input(auxi3)) **changed - unlock regardless of door state
+										relay_on(2, 0);
+										if (drmon2 !=0)
+											{
+											if (!input(door2)) output_low(auxo2);	//if door closed turn local alarm off
+											else if ((crcflags & 0x08) == 0x00) evt.evt = 0x00;	//door is open - if not muster controller do not report
+											}
+										if ((dr2stat == DOOR_SOP) && ((crcflags & 0x08) == 0x00)) evt.evt = 0x00; //copes with no door monitoring and toggledoor
+										if ((crdst.data & 0x01) && (latchrly2 == 0x01))	ToggleDoor(2);
 										}
 									}
 								}
 							else 
 								{
-								evt.evt = E2_APB;		//apb error
+								evt.evt = E2_APB;					//apb error
 								bit_clear(crdst.data, CRD_CAP1);	//not capture
 								}
 							}
 						else 
 							{
-							evt.evt = E2_APB;		//apb error
-							bit_clear(crdst.data, CRD_CAP1);	//not capture
+							evt.evt = E2_APB;						//apb error
+							bit_clear(crdst.data, CRD_CAP1);		//not capture
 							}
 						}
-					if (bit_test(crdst.data, CRD_CAP1))	//capture?
+					if (bit_test(crdst.data, CRD_CAP1))				//capture?
         				{
-						cap2tick = 2;					//1 second
-            			output_high(rled2);			//capture card
+						cap2tick = 2;								//1 second
+            			output_high(rled2);							//capture card
             			}
 					if (evt.evt != 0x00) store_event();
 					}
@@ -1345,14 +1426,17 @@ static char oldmin, oldio;
 //Check for rex1 activity			
 			if (!input(rex1))	//if rex1 low
 				{
-				if ((dr1stat == DOOR_NO) && input(auxi2))
+//				if ((dr1stat == DOOR_NO) && input(auxi2)) **changed - unlock regardless of door state
+				if (input(auxi2))
 					{
 					if (rex1cnt > 0)
 						{
 						if (!--rex1cnt)
 							{
+							//report rex1 event only if door normal or door is open AND a muster controller
+							if (dr1stat == DOOR_NO) zeroevent(E1_REX);	//rex 1 event
+							else if ((crcflags & 0x08) != 0x00) zeroevent(E1_REX);	//rex 1 event
 							relay_on(1, 0);			//relay 1 on
-							zeroevent(E1_REX);		//rex 1 event
 							}
 						}
 					}
@@ -1364,6 +1448,7 @@ static char oldmin, oldio;
 //Check door1
 			if (drmon1 != 0)
 				{
+				crcflags = read_ext_eeprom(MEM, CTR_FLAGS);	//controller flags
 				if (input(door1))	//door open?
 					{
 					if (door1cnt)
@@ -1372,24 +1457,28 @@ static char oldmin, oldio;
 							{
 							if (dr1stat == DOOR_NO)
 								{
-								output_high(auxo1);		//local alarm
-								zeroevent(E1_DFORCE); //door forced open
+								output_high(auxo1);			//local alarm
+								zeroevent(E1_DFORCE);		//door forced open
 								x = read_ext_eeprom(MEM, ALTRIGS);
 								if (bit_test(x, 1)) 
 									{
 									alarmtick = read_ext_eeprom(MEM, ALTIME);
 									alarmtout = false;
 									}
-								dr1stat = DOOR_FOP;		//door forced open
+								dr1stat = DOOR_FOP;			//door forced open
 								}
 							else if (dr1stat == DOOR_REL)
 								{
-								output_low(relay1);		//relay 1 off
-								output_low(gled1);		//green led 1 off
-								if (crcflags & 0x02) output_low(gled2);	//if single door
+								if (crcflags & 0x10) dr1atg = 1;	//anti-tailgate disabled so flag and don't lock
+								else
+									{
+									output_low(relay1);		//relay 1 off
+									output_low(gled1);		//green led 1 off
+									if (crcflags & 0x02) output_low(gled2);	//if single door
+									}
+								dr1stat = DOOR_RELOP;	//door released & open
 								x = read_ext_eeprom(MEM, DOOR1_TM);	//door open time
 								dr1tick = x * 2;
-								dr1stat = DOOR_RELOP;	//door released & open
 								dr1tout = 0;
 								}
 							}
@@ -1399,65 +1488,84 @@ static char oldmin, oldio;
 					{	
 					if (door1cnt < DBOUNCE)
 						{
-						if (++door1cnt >= DBOUNCE)	//door is closed
+						if (++door1cnt >= DBOUNCE)			//door is closed
 							{
-							if (dr1stat == DOOR_FOP)	//forced open
+							if (dr1stat == DOOR_FOP)		//forced open
 								{
-								dr1stat = DOOR_NO;		
-								zeroevent(E1_DCLOSE);	//door close
+								dr1stat = DOOR_NO;	
+								zeroevent(E1_DCLOSE);		//door close
 								}
 							else if (dr1stat == DOOR_LOP)	//left open?
 								{
 								if (!input(door2) && !input(auxi1)) 
-									output_low(auxo1);	//local alarm off
-								dr1stat = DOOR_NO;	//door normal
-								zeroevent(E1_DCLOSE);	//door close
+									{
+									output_low(auxo1);		//local alarm off
+									dr1stat = DOOR_NO;		//door normal
+									zeroevent(E1_DCLOSE);	//door close
+									}
 								}
 							else if (dr1stat == DOOR_RELOP) dr1stat = DOOR_NO;						
 							}
 						}
 					}
-				if (dr1tout)		//door open time-out
+				if (dr1tout)								//door open time-out
 					{
-					if (dr1stat == DOOR_RELOP)	//if released and open
+					if ((dr1stat == DOOR_NO) && (dr1atg == 1) && (input(door1))) //atg disabled & door is open
 						{
-						zeroevent(E1_DLOPEN);	//left open
-						dr1stat = DOOR_LOP;		//door left open
-						output_high(auxo1);		//local alarm on
+						zeroevent(E1_DLOPEN);				//left open
+						dr1stat = DOOR_LOP;					//door left open
+						output_high(auxo1);					//local alarm on
+						dr1atg = 0;
+						}
+					if (dr1stat == DOOR_RELOP)				//if released and open
+						{
+						zeroevent(E1_DLOPEN);				//left open
+						dr1stat = DOOR_LOP;					//door left open
+						output_high(auxo1);					//local alarm on
 						}
 					dr1tout = 0;
 					}
 				}
-			if (r1tout)				//relay 1 timer 
+			if (r1tout)										//relay 1 timer 
 				{
-				if ((dr1stat == DOOR_REL))
+				if (dr1stat == DOOR_REL)
 					{
-					output_low(relay1);		//relay 1 off
-					output_low(gled1);		//green led 1 off
+					output_low(relay1);						//relay 1 off
+					output_low(gled1);						//green led 1 off
 					if (crcflags & 0x02) output_low(gled2);	//if single door
-					if (drmon1 != 0) zeroevent(E1_DNOPEN);	//not opened
+					if ((drmon1 != 0) && (!input(door1))) zeroevent(E1_DNOPEN);	//not opened
 					dr1stat = DOOR_NO;
 					}
 				else if (dr1stat == DOOR_NO)
 					{
-					output_low(relay1);		//relay 1 off
-					output_low(gled1);		//green led 1 off
+					output_low(relay1);						//relay 1 off
+					output_low(gled1);						//green led 1 off
 					if (crcflags & 0x02) output_low(gled2);	//if single door
 					dr1stat = DOOR_NO;
+					}
+//added to lock door if ((ATG disabled) or (relay operated while door was open))
+				else if (((dr1stat == DOOR_RELOP) && (dr1atg == 1)) | ((dr1stat == DOOR_FOP) | (dr1stat == DOOR_LOP)))
+					{
+					output_low(relay1);						//relay 1 off
+					output_low(gled1);						//green led 1 off
+					if (crcflags & 0x02) output_low(gled2);	//if single door
 					}
 				r1tout = false;
 				}
 //Check for rex2 activity
-			if (!input(rex2))			//if rex2 low
+			if (!input(rex2))								//if rex2 low
 				{
-				if ((dr2stat == DOOR_NO) && input(auxi3))
+//				if ((dr2stat == DOOR_NO) && input(auxi3)) **changed - unlock regardless of door state
+				if (input(auxi3))
 					{
 					if (rex2cnt > 0)
 						{
 						if (!--rex2cnt)
 							{
-							relay_on(2, 0);			//relay 2 on
-							zeroevent(E2_REX);		//rex 2 event
+							//report rex2 event only if door normal or door is open AND a muster controller
+							if (dr2stat == DOOR_NO) zeroevent(E2_REX);		//rex 1 event
+							else if ((crcflags & 0x08) != 0x00) zeroevent(E2_REX);		//rex 1 event
+							relay_on(2, 0);					//relay 2 on
 							}
 						}
 					}
@@ -1469,7 +1577,8 @@ static char oldmin, oldio;
 //Check door2
 			if ((drmon2 != 0) && !(crcflags & 0x02))
 				{
-				if (input(door2))	//door open?
+				crcflags = read_ext_eeprom(MEM, CTR_FLAGS);	//controller flags
+				if (input(door2))							//door open?
 					{
 					if (door2cnt)
 						{
@@ -1477,24 +1586,27 @@ static char oldmin, oldio;
 							{
 							if (dr2stat == DOOR_NO)
 								{
-								output_high(auxo2);		//door2 alarm
-								zeroevent(E2_DFORCE); //door forced open
+								output_high(auxo2);			//door2 alarm
+								zeroevent(E2_DFORCE); 		//door forced open
 								x = read_ext_eeprom(MEM, ALTRIGS);
 								if (bit_test(x, 1)) 
 									{
 									alarmtick = read_ext_eeprom(MEM, ALTIME);
 									alarmtout = false;
 									}
-								dr2stat = DOOR_FOP;		//door forced open
+								dr2stat = DOOR_FOP;			//door forced open
 								}
 							else if ((dr2stat == DOOR_REL))
 								{
-								output_low(relay2);		//relay 2 off
-								output_low(gled2);		//green led 2 off
-								dr2stat = DOOR_RELOP;
+								if (crcflags & 0x20) dr2atg = 1;	//anti-tailgate disabled so flag and don't lock
+								else
+									{
+									output_low(relay2);		//relay 2 off
+									output_low(gled2);		//green led 2 off
+									}
+								dr2stat = DOOR_RELOP;	//door released & open
 								x = read_ext_eeprom(MEM, DOOR2_TM);	//door open time
 								dr2tick = x * 2;
-								dr2stat = DOOR_RELOP;	//door released & open
 								dr2tout = 0;
 								}
 							}
@@ -1504,128 +1616,143 @@ static char oldmin, oldio;
 					{	
 					if (door2cnt < DBOUNCE)
 						{
-						if (++door2cnt >= DBOUNCE)	//door is closed
+						if (++door2cnt >= DBOUNCE)			//door is closed
 							{
-							if (dr2stat == DOOR_FOP)	//forced open
+							if (dr2stat == DOOR_FOP) 		//forced open
 								{
 								dr2stat = DOOR_NO;		
-								zeroevent(E2_DCLOSE);	//door close
+								zeroevent(E2_DCLOSE);		//door close
 								}
 							else if (dr2stat == DOOR_LOP)	//left open?
 								{
-								if (!input(door2)) output_low(auxo2);	//door2 alarm off
-								dr2stat = DOOR_NO;	//door normal
-								zeroevent(E2_DCLOSE);	//door close
+								if (!input(door2))
+									{
+									output_low(auxo2);		//door2 alarm off
+									dr2stat = DOOR_NO;		//door normal
+									zeroevent(E2_DCLOSE);	//door close
+									}
 								}
 							else if (dr2stat == DOOR_RELOP) dr2stat = DOOR_NO;						
 							}
 						}
 					}
-				if (dr2tout)		//door open time-out
+				if (dr2tout)								//door open time-out
 					{
-					if (dr2stat == DOOR_RELOP)	//if released and open
+					if ((dr2stat == DOOR_NO) && (dr2atg == 1) && (input(door2))) //atg is disabled and door is open
 						{
-						zeroevent(E2_DLOPEN);	//left open
-						dr2stat = DOOR_LOP;		//door left open
-						output_high(auxo2);		//door2 alarm on
+						zeroevent(E2_DLOPEN);				//left open
+						dr2stat = DOOR_LOP;					//door left open
+						output_high(auxo2);					//local alarm on
+						dr2atg = 0;
+						}
+					if (dr2stat == DOOR_RELOP)				//if released and open
+						{
+						zeroevent(E2_DLOPEN);				//left open
+						dr2stat = DOOR_LOP;					//door left open
+						output_high(auxo2);					//door2 alarm on
 						}
 					dr2tout = 0;
 					}
 				}
-			if (r2tout)				//relay 2 timer 
+			if (r2tout)										//relay 2 timer 
 				{
-				if ((dr2stat == DOOR_REL))
+				if (dr2stat == DOOR_REL)
 					{
-					output_low(relay2);		//relay 2 off
-					output_low(gled2);		//green led 2 off
-					if (drmon2 != 0) zeroevent(E2_DNOPEN);	//not opened
+					output_low(relay2);						//relay 2 off
+					output_low(gled2);						//green led 2 off
+					if ((drmon2 != 0) && (!input(door2))) zeroevent(E2_DNOPEN);	//not opened
 					dr2stat = DOOR_NO;
 					}
 				else if (dr2stat == DOOR_NO)
 					{
-					output_low(relay2);		//relay 2 off
-					output_low(gled2);		//green led 2 off
+					output_low(relay2);						//relay 2 off
+					output_low(gled2);						//green led 2 off
 					dr2stat = DOOR_NO;
+					}
+//added to lock door if ((ATG disabled) or (relay operated while door was open))
+				else if (((dr2stat == DOOR_RELOP) && (dr2atg == 1)) | ((dr2stat == DOOR_FOP) | (dr2stat == DOOR_LOP)))
+					{
+					output_low(relay2);						//relay 2 off
+					output_low(gled2);						//green led 2 off
 					}
 				r2tout = false;
 				}
 //Check aux input 1 (Tamper)
-			oldio = instat;					//old input status			
-			if (input(auxi1))				//input high?
+			oldio = instat;									//old input status			
+			if (input(auxi1))								//input high?
 				{
-				if (!bit_test(instat, 0))	//already high?
+				if (!bit_test(instat, 0))					//already high?
 					{
 					if (++in1cnt == 0)
 						{
-						zeroevent(E0_TPON);	//Tamper ON
-						bit_set(instat, 0);	//input is high
-						output_high(auxo1);	//local alarm on		
+						zeroevent(E0_TPON);					//Tamper ON
+						bit_set(instat, 0);					//input is high
+						output_high(auxo1);					//local alarm on		
 						}
 					}
 				}
-			else if (bit_test(instat, 0))	//alredy low?
+			else if (bit_test(instat, 0))					//already low?
 				{
 				if (++in1cnt == 0)
 					{
-					zeroevent(E0_TPOK);		//Tamper is OK
-					bit_clear(instat, 0);	//input is low
-					if (!input(door1) && !input(door2)) 
-						output_low(auxo1);	//local alarm off
+					zeroevent(E0_TPOK);						//Tamper is OK
+					bit_clear(instat, 0);					//input is low
+					if (!input(door1) && !input(door2)) output_low(auxo1);	//local alarm off
 					}
 				}
 //Check aux input 2 (Arming Reader 1)
-			if (input(auxi2))				//input high?
+			if (input(auxi2))								//input high?
 				{
-				if (!bit_test(instat, 1))	//already high?
+				if (!bit_test(instat, 1))					//already high?
 					{
 					if (++in2cnt == 0)
 						{
-						zeroevent(E0_ARM1);	//reader 1 armed
-						bit_set(instat, 1);	//input is high
+						zeroevent(E0_ARM1);					//reader 1 armed
+						bit_set(instat, 1);					//input is high
 						}
 					}
 				}
-			else if (bit_test(instat, 1))	//alredy low?
+			else if (bit_test(instat, 1))					//alredy low?
 				{
 				if (++in2cnt == 0)
 					{
-					zeroevent(E0_NARM1);	//reader 1 not armed
-					bit_clear(instat, 1);	//input is low
+					zeroevent(E0_NARM1);					//reader 1 not armed
+					bit_clear(instat, 1);					//input is low
 					}
 				}
 //Check aux input 3 (Arming Reader 2)
-			if (input(auxi3))				//input high?
+			if (input(auxi3))								//input high?
 				{
-				if (!bit_test(instat, 2))	//already high?
+				if (!bit_test(instat, 2))					//already high?
 					{
 					if (++in3cnt == 0)
 						{
-						zeroevent(E0_ARM2);	//reader 2 armed
-						bit_set(instat, 2);	//input is high
+						zeroevent(E0_ARM2);					//reader 2 armed
+						bit_set(instat, 2);					//input is high
 						}
 					}
 				}
-			else if (bit_test(instat, 2))	//alredy low?
+			else if (bit_test(instat, 2))					//alredy low?
 				{
 				if (++in3cnt == 0)
 					{
-					zeroevent(E0_NARM2);	//reader 2 not armed
-					bit_clear(instat, 2);	//input is low
+					zeroevent(E0_NARM2);					//reader 2 not armed
+					bit_clear(instat, 2);					//input is low
 					}
 				}
 //aux in 4
-			if (input(auxi4))				//input high?
+			if (input(auxi4))								//input high?
 				{
-				if (!bit_test(instat, 3))	//already high?
+				if (!bit_test(instat, 3))					//already high?
 					{
 					if (++in4cnt == 0)
 						{
-						zeroevent(E0_NIO4);	//input 4 open
-						bit_set(instat, 3);	//input is high
+						zeroevent(E0_NIO4);					//input 4 open
+						bit_set(instat, 3);					//input is high
 						}
 					}
 				}
-			else if (bit_test(instat, 3))	//alredy low?
+			else if (bit_test(instat, 3))					//alredy low?
 				{
 				if (++in4cnt == 0)
 					{
@@ -1634,90 +1761,90 @@ static char oldmin, oldio;
 					crcflags |= 0x02;
 #endif
 					if (crcflags & 0x01) zeroevent(E0_OPALL);	//open all doors
-					else zeroevent(E0_IO4);		//input 4 closed 
-					bit_clear(instat, 3);	//input is low
+					else zeroevent(E0_IO4);					//input 4 closed 
+					bit_clear(instat, 3);					//input is low
 					}
 				}
 
 //aux in 5
-			if (input(auxi5))				//input high?
+			if (input(auxi5))								//input high?
 				{
-				if (!bit_test(instat, 4))	//already high?
+				if (!bit_test(instat, 4))					//already high?
 					{
 					if (++in5cnt == 0)
 						{
-						zeroevent(E0_NIO5);	//input 5 open
-						bit_set(instat, 4);	//input is high
+						zeroevent(E0_NIO5);					//input 5 open
+						bit_set(instat, 4);					//input is high
 						}
 					}
 				}
-			else if (bit_test(instat, 4))	//alredy low?
+			else if (bit_test(instat, 4))					//alredy low?
 				{
 				if (++in5cnt == 0)
 					{
-					zeroevent(E0_IO5);		//input 5 closed
-					bit_clear(instat, 4);	//input is low
+					zeroevent(E0_IO5);						//input 5 closed
+					bit_clear(instat, 4);					//input is low
 					}
 				}
 //aux in 6
-			if (input(auxi6))				//input high?
+			if (input(auxi6))								//input high?
 				{
-				if (!bit_test(instat, 5))	//already high?
+				if (!bit_test(instat, 5))					//already high?
 					{
 					if (++in6cnt == 0)
 						{
-						zeroevent(E0_NIO6);	//input 6 open
-						bit_set(instat, 5);	//input is high
+						zeroevent(E0_NIO6);					//input 6 open
+						bit_set(instat, 5);					//input is high
 						}
 					}
 				}
-			else if (bit_test(instat, 5))	//alredy low?
+			else if (bit_test(instat, 5))					//alredy low?
 				{
 				if (++in6cnt == 0)
 					{
-					zeroevent(E0_IO6);		//input 6 closed
-					bit_clear(instat, 5);	//input is low
+					zeroevent(E0_IO6);						//input 6 closed
+					bit_clear(instat, 5);					//input is low
 					}
 				}
 //aux input 7 
-			if (input(auxi7))				//input high?
+			if (input(auxi7))								//input high?
 				{
-				if (!bit_test(instat, 6))	//already high?
+				if (!bit_test(instat, 6))					//already high?
 					{
 					if (++in7cnt == 0)
 						{
-						zeroevent(E0_NIO7);	//input 7 open
-						bit_set(instat, 6);	//input is high
+						zeroevent(E0_NIO7);					//input 7 open
+						bit_set(instat, 6);					//input is high
 						}
 					}
 				}
-			else if (bit_test(instat, 6))	//alredy low?
+			else if (bit_test(instat, 6))					//alredy low?
 				{
 				if (++in7cnt == 0)
 					{
-					zeroevent(E0_IO7);		//input 7 closed
-					bit_clear(instat, 6);	//input is low
+					zeroevent(E0_IO7);						//input 7 closed
+					bit_clear(instat, 6);					//input is low
 //					iocheck(0x07);
 					}
 				}
 //aux input 8
-			if (input(auxi8))				//input high?
+			if (input(auxi8))								//input high?
 				{
-				if (!bit_test(instat, 7))	//already high?
+				if (!bit_test(instat, 7))					//already high?
 					{
 					if (++in8cnt == 0)
 						{
-						zeroevent(E0_NIO8);	//input 8 open
-						bit_set(instat, 7);	//input is high
+						zeroevent(E0_NIO8);					//input 8 open
+						bit_set(instat, 7);					//input is high
 						}
 					}
 				}
-			else if (bit_test(instat, 7))	//alredy low?
+			else if (bit_test(instat, 7))					//alredy low?
 				{
 				if (++in8cnt == 0)
 					{
-					zeroevent(E0_IO8);		//input 8 closed
-					bit_clear(instat, 7);	//input is low
+					zeroevent(E0_IO8);						//input 8 closed
+					bit_clear(instat, 7);					//input is low
 //					iocheck(0x08);
 					}
 				}
@@ -1733,10 +1860,7 @@ static char oldmin, oldio;
 				if (update_doortz(1)) store_event();
 				if (update_doortz(2)) store_event();
 				}
-			if (++onesec > 3)
-				{
-				onesec = 0;				//once per second
-				}
+			if (++onesec > 3) onesec = 0;					//once per second
 			tout = false;
 			}
 //Check for new hour (APB reset)            
@@ -2427,26 +2551,33 @@ short ok;
 		case 0x6d:	//Set door mode (open/active)
 					if (rxdat[3] == 1)
 						{
-						if (rxdat[4] == 1)	//close door
+						if (rxdat[4] == 1)			//close door
 							{
 							if (dr1stat == DOOR_SOP)
 								{
 								output_low(relay1);	//relay1 off
 								output_low(gled1);	//green led1 off
+								if (crcflags & 0x02) output_low(gled2);
 								dr1stat = DOOR_NO;	//set normal
 								if (update_doortz(1)) store_event();
 								}
+							else if (dr1stat == DOOR_NO)
+								{
+								output_low(auxo1);  //turn off alarm
+								}
 							}
-						else				//open door
+
+						else						//open door
 							{
 							dr1stat = DOOR_SOP;		//set open
 							output_high(relay1);	//relay1 on
 							output_high(gled1);		//green led1 on
+							if (crcflags & 0x02) output_high(gled2);
 							}
 						}
 					else if (rxdat[3] == 2)
 						{
-						if (rxdat[4] == 1)	//close door
+						if (rxdat[4] == 1)			//close door
 							{
 							if (dr2stat == DOOR_SOP)
 								{
@@ -2455,8 +2586,12 @@ short ok;
 								dr2stat = DOOR_NO;	//set normal
 								if (update_doortz(2)) store_event();
 								}
+							else if (dr2stat == DOOR_NO)
+								{
+								output_low(auxo2);  //turn off alarm
+								}
 							}
-						else				//open door
+						else						//open door
 							{
 							dr2stat = DOOR_SOP;		//set open
 							output_high(relay2);	//relay2 on
@@ -2498,7 +2633,12 @@ short ok;
 						}
 					sendack(rpl);
 					break;
-		case 0x72:	//Config controller
+		case 0x72:	//set door timezones
+					rxdat[2] = DTZQTY * DTZSIZE + 4;
+					writeb_ext_eeprom(DTZ1, &rxdat[2]);
+					sendack(rpl);
+					break;          
+		case 0x73:	//Config controller
 					rxdat[2] = rxdat[1] - 4;
 					rxdat[30] = node;		//do not change node
 					writeb_ext_eeprom(CBASE, &rxdat[2]);
@@ -2506,12 +2646,12 @@ short ok;
 //					writeb_spi_eeprom(CBASE, &rxdat[2]);
 					sendack(rpl);
 					break;
-		case 0x73:	//events on/off
+		case 0x74:	//events on/off
 					write_ext_eeprom(MEM, EVTS_ON, rxdat[3]);
 					evtson = rxdat[3];
 					sendack(rpl);
 					break;
-		case 0x74:	//set holidays
+		case 0x75:	//set holidays
 					rxdat[2] = 64;
 					writeb_ext_eeprom(HOLS, &rxdat[2]);
 					sendack(rpl);
@@ -2547,8 +2687,8 @@ char x;
 		if (tm > 0) r1tick = tm;
 		else 
 			{
-			x = read_ext_eeprom(MEM, REL1_TM);	//relay time
-			if (x == 0x00)						//0.5sec
+			x = read_ext_eeprom(MEM, REL1_TM);			//relay time
+			if (x == 0x00)								//0.5sec
 				{
 				tmr2tick = 208;
 				r1tick = 1;
@@ -2556,11 +2696,11 @@ char x;
 			else r1tick = x * 2;
 			}
 		r1tout = false;
-		if (drmon1 != 0)					//if door monitoring
+		if (drmon1 != 0)								//if door monitoring
 			{
 			dr1tick = x * 2 + 2;
 			dr1tout = false;
-			if (dr1stat == DOOR_NO) dr1stat = DOOR_REL;				
+			if (dr1stat == DOOR_NO) dr1stat = DOOR_REL;
 			}
 		}
 	else if (rly == 2)
@@ -2571,8 +2711,8 @@ char x;
 		if (tm > 0) r2tick = tm;
 		else 
 			{
-			x = read_ext_eeprom(MEM, REL2_TM);	//relay time
-			if (x == 0x00)						//0.5sec
+			x = read_ext_eeprom(MEM, REL2_TM);			//relay time
+			if (x == 0x00)								//0.5sec
 				{
 				tmr2tick = 208;
 				r2tick = 1;
@@ -2580,7 +2720,7 @@ char x;
 			else r2tick = x * 2;
 			}
 		r2tout = false;
-		if (drmon2 != 0)					//if door monitoring
+		if (drmon2 != 0)								//if door monitoring
 			{
 			dr2tick = x * 2 + 2;
 			dr2tout = false;
@@ -2610,19 +2750,64 @@ void powerup_check(void)
 //---------------------------------------------------------------------------
 short update_doortz(char rdr)
 {
-short chg;
+short chg, op;
+unsigned char n, x;
+unsigned long tz;
 
-	chg = false;					//no change
+	chg = 0;
 	read_rtc();
+	op = 0;
 	if (rdr == 1)
 		{
-		dr1tzone = read_ext_eeprom(MEM, DOOR1_TZ);	//door 1 timezone
-		if (check_timezone(dr1tzone))
+		x = read_ext_eeprom(MEM, DOOR1_TZ);	//door 1 timezone
+		if (x == 0) goto updz1;
+		else if (x == 1)
 			{
-			if (dr1stat == DOOR_NO)
+			op = 1;
+			goto updz1;
+			}
+		bf[0] = 2;
+		readb_ext_eeprom(DACC0, bf);
+		if ((bf[1] == 0x00) && (bf[2] == 0x00)) 
+			{
+			if (dr1stat == DOOR_TZOP) goto updz1;
+			else return 0;
+			}
+		x = bf[2];
+		tz = DTZ1;								//point to tz1
+		for (n = 0; n < 8; n++)					//1st 8 door timezones
+			{
+			if (bit_test(x, n))
 				{
+				if (tz_check(tz)) 
+					{
+					op = 1;		//timezone valid
+					goto updz1;
+					}
+				}
+			tz += (unsigned long)DTZSIZE;		//point to next tz
+			}
+		x = bf[1];
+		for (n = 0; n < 8; n++)					//next 8 timezones
+			{
+			if (bit_test(x, n))
+				{
+				if (tz_check(tz)) 
+					{
+					op = 1;	//timezone valid
+					goto updz1;
+					}
+				}
+			tz += (unsigned long)DTZSIZE;		//point to next tz
+			}
+updz1:
+		if (op == 1)
+			{
+			if ((dr1stat == DOOR_NO) | (dr1stat == DOOR_SOP))	//added _SOP so status set if already open
+				{												//otherwise door remains open
 				output_high(relay1);		//relay 1 on
 				output_high(gled1);			//green led 1 on
+				if (crcflags & 0x02) output_high(gled2);
 				evt.card.w = 0;
 				evt.evt = E1_OPTZ;		//dr1 opened
 				chg = true;
@@ -2638,22 +2823,64 @@ short chg;
 				chg = true;
 				output_low(relay1);		//relay 1 off
 				output_low(gled1);		//green led 1 off
+				if (crcflags & 0x02) output_low(gled2);
 				dr1stat = DOOR_NO;
 				}
 			}
 		}
-	else if (rdr == 2)
+	else
 		{
-		dr2tzone = read_ext_eeprom(MEM, DOOR2_TZ);	//door 2 timezone
-		if (check_timezone(dr2tzone))
+		x = read_ext_eeprom(MEM, DOOR2_TZ);	//door 2 timezone
+		if (x == 0) goto updz2;
+		else if (x == 1)
 			{
-			if (dr2stat == DOOR_NO) 
+			op = 1;
+			goto updz2;
+			}
+		bf[0] = 2;
+		readb_ext_eeprom(DACC1, bf);
+		if ((bf[1] == 0x00) && (bf[2] == 0x00)) 
+			{
+			if (dr2stat == DOOR_TZOP) goto updz2;
+			else return 0;
+			}
+		x = bf[2];
+		tz = DTZ1;								//point to tz1
+		for (n = 0; n < 8; n++)					//1st 8 door timezones
+			{
+			if (bit_test(x, n))
 				{
-				evt.evt = E2_OPTZ;		//dr2 opened
-				evt.card.w = 0;
-				chg = true;
+				if (tz_check(tz)) 
+					{
+					op = 1;		//timezone valid
+					goto updz2;
+					}
+				}
+			tz += (unsigned long)DTZSIZE;		//point to next tz
+			}
+		x = bf[1];
+		for (n = 0; n < 8; n++)					//next 8 timezones
+			{
+			if (bit_test(x, n))
+				{
+				if (tz_check(tz)) 
+					{
+					op = 1;	//timezone valid
+					goto updz2;
+					}
+				}
+			tz += (unsigned long)DTZSIZE;		//point to next tz
+			}
+updz2:
+		if (op == 1)
+			{
+			if ((dr2stat == DOOR_NO) | (dr2stat == DOOR_SOP))	//added _SOP so status set if already open
+				{												//otherwise door remains open
 				output_high(relay2);		//relay 2 on
 				output_high(gled2);			//green led 2 on
+				evt.card.w = 0;
+				evt.evt = E2_OPTZ;		//dr2 opened
+				chg = true;
 				dr2stat = DOOR_TZOP;
 				}
 			}
@@ -3663,7 +3890,7 @@ int32 tsec;
 			lastcard1.sec = tsec;
 			return 0;
 			}
-		else if ((tsec - lastcard1.sec) < 4)
+		else if ((tsec - lastcard1.sec) < buddytime)
 			{
 			tsec = evt.card.w;		//save current card
 			evt.card.w = lastcard1.card;
@@ -3673,7 +3900,13 @@ int32 tsec;
 			lastcard1.card = 0x00000000;
 			return 1;
 			}
-		return 0;
+		else
+			{
+			lastcard1.card = 0x00000000;
+			lastcard1.sec = tsec;
+			return 0;
+			}
+//		return 0;
 		}
 	else if (rdr == 2)
 		{
@@ -3688,7 +3921,7 @@ int32 tsec;
 			lastcard2.sec = tsec;
 			return 0;
 			}
-		else if ((tsec - lastcard2.sec) < 4)
+		else if ((tsec - lastcard2.sec) < buddytime)
 			{
 			tsec = evt.card.w;		//save current card
 			evt.card.w = lastcard2.card;
@@ -3698,7 +3931,13 @@ int32 tsec;
 			lastcard2.card = 0x00000000;
 			return 1;
 			}
-		return 0;
+		else
+			{
+			lastcard2.card = 0x00000000;
+			lastcard2.sec = tsec;
+			return 0;
+			}
+//		return 0;
 		}
 	return 0;				
 }
@@ -3707,22 +3946,41 @@ int32 tsec;
 void ToggleDoor(unsigned char dr)
 {
 
+	flashcnt = 0;
+	flashdelay = 200;
 	if (dr == 1)	//if door 1
 		{
 		if (dr1stat == DOOR_SOP)
 			{
-			output_low(relay1);	//relay1 off
-			output_low(gled1);	//green led1 off
-			if (crcflags & 0x02) output_low(gled2);
-			dr1stat = DOOR_NO;	//set normal
+			output_low(relay1);		//relay1 off
+			while (flashcnt < 3)
+				{
+				output_high(gled1);
+				if (crcflags & 0x02) output_high(gled2);
+				delay_ms(flashdelay);
+				output_low(gled1);
+				if (crcflags & 0x02) output_low(gled2);
+				delay_ms(flashdelay*3);
+				flashcnt++;
+				}
+			dr1stat = DOOR_NO;		//set normal
 			evt.evt = E1_LATC;
 			}
-		else	//open door
+//		else	//open door
+		else if (dr1stat != DOOR_TZOP)
 			{
 			dr1stat = DOOR_SOP;		//set open
 			output_high(relay1);	//relay1 on
-			output_high(gled1);		//green led1 on
-			if (crcflags & 0x02) output_high(gled2);
+			while (flashcnt < 4)
+				{
+				output_low(gled1);
+				if (crcflags & 0x02) output_low(gled2);
+				delay_ms(flashdelay*3);
+				output_high(gled1);
+				if (crcflags & 0x02) output_high(gled2);
+				delay_ms(flashdelay);
+				flashcnt++;
+				}
 			evt.evt = E1_LATO;
 			}
 		}
@@ -3730,16 +3988,36 @@ void ToggleDoor(unsigned char dr)
 		{
 		if (dr2stat == DOOR_SOP)
 			{
-			output_low(relay2);	//relay2 off
-			output_low(gled2);	//green led2 off
-			dr2stat = DOOR_NO;	//set normal
+			output_low(relay2);		//relay2 off
+			while (flashcnt < 3)
+				{
+				output_high(gled2);
+				if (crcflags & 0x02) output_high(gled1);
+				delay_ms(flashdelay);
+				output_low(gled2);
+				if (crcflags & 0x02) output_low(gled1);
+				delay_ms(flashdelay*3);
+				flashcnt++;
+				}
+			dr2stat = DOOR_NO;		//set normal
 			evt.evt = E2_LATC;
+//			update_doortz(2);
 			}
-		else	//open door
+//		else	//open door
+		else if (dr2stat != DOOR_TZOP)
 			{
 			dr2stat = DOOR_SOP;		//set open
 			output_high(relay2);	//relay2 on
-			output_high(gled2);		//green led2 on
+			while (flashcnt < 4)
+				{
+				output_low(gled2);
+				if (crcflags & 0x02) output_low(gled1);
+				delay_ms(flashdelay*3);
+				output_high(gled2);
+				if (crcflags & 0x02) output_high(gled1);
+				delay_ms(flashdelay);
+				flashcnt++;
+				}
 			evt.evt = E2_LATO;
 			}
 		}
