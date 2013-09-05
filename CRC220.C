@@ -14,22 +14,24 @@
 //Version: 1.09 - 5/12/08 -
 //Version: 1.10 - 10/3/09 - Rework door monitoring etc.
 //Version: 2.00 - 11/3/09 - PIN + Card added
-//Version: 2.01 - 6/7/09 - Access level 0, card always rejected (accesslevel)
+//Version: 2.01 - 6/7/09  - Access level 0, card always rejected (accesslevel)
 //Version: 2.02 - 22/9/09 - Single door mode, buddy mode, Open all doors on input 4
 //Version: 2.03 - 18/1/10 - removed call to iocheck for auxin 7 and 8
 //Version: 2.04 - 8/2/10  - Auxo1 = door1 alarm, Auxo2 = door2 alarm
 //							Rdr1 cancels door 1 alarm, Rdr2 cancels door 2 alarm
 //Version: 2.06 - 26/5/10 - Passback added
-//Version: 2.07 - 9/7/10 - Fixed error in single door mode on reader 2 still active
+//Version: 2.07 - 9/7/10  - Fixed error in single door mode on reader 2 still active
 //							when door open
 //Version: 2.08 - 13/9/10 - Fixed Relay 2 0.5 second option 
 //Version: 2.09 - 21/12/10 - Option to compile for single door only. (define ONEDOOR)
 //Version: 2.10 - 16/3/11 - Buddy mode now sends both card numbers to host.
-//							Improvements for TCP timing. 
+//							Improvements for TCP timing.
+//Version: 2.11 - 4/10/11 - Latching output relay added
+//						  	Muster controller option added.
 
 #include <18F6722.H>
 
-//#define	ONEDOOR
+#define	ONEDOOR
 
 #if defined(ONEDOOR)
 #define MODVER 5
@@ -83,7 +85,7 @@
 
 
 #define major_ver	0x02			//software version
-#define minor_ver	10
+#define minor_ver	11
 
 #use delay(clock=40000000, RESTART_WDT)
 #use rs232(baud = 9600, xmit = PIN_C6, rcv = PIN_C7, RESTART_WDT, ERRORS)
@@ -279,6 +281,11 @@ enum RDR_STATS {RDR_NO, RDR_PIN};
 #define	E1_APINNF	0x2B		//aux PIN 1 not found
 #define	E2_APINNF	0x2C		//aux PIN 2 not found
 #define	E0_INP		0x30		//Input status
+
+#define	E1_LATO		0x3B		//Reader 1 latched open
+#define	E1_LATC		0x3C		//Reader 1 latched closed
+#define	E2_LATO		0x3D		//Reader 1 latched open
+#define	E2_LATC		0x3E		//Reader 1 latched closed
 
 #define	E1_ACC		0x41		//reader 1 accept
 #define	E1_AL		0x42		//reader 1 access-level
@@ -607,6 +614,7 @@ long dayofyear(void);
 char chkpin(char *pdat);
 char check_apb(char rdr);
 char buddycheck(char rdr);
+void ToggleDoor(unsigned char dr);
 
 //---------------------------------------------------------------------
 //Timer 1 interrupt routine (52mS)
@@ -1029,48 +1037,60 @@ static char oldmin, oldio;
 //check reader1 in
 		if (rd1istat == CARD_RDY)	//reader1 in
 			{
-			if ((dr1stat == DOOR_NO) && input(auxi2))
+//			if ((dr1stat == DOOR_NO) && input(auxi2))
+			if (cardfmt == FMT_MAG) c = magcard(1);
+			else c = wiegcard(1);
+			if (c == RD_OK)
 				{
-				if (cardfmt == FMT_MAG) c = magcard(1);
-				else c = wiegcard(1);
-				if (c == RD_OK)
+				evt.evt = check_card(1);
+				if (evt.evt == E1_PIN)
 					{
-					evt.evt = check_card(1);
-					if (evt.evt == E1_PIN)
+					if (pin1stat == PIN_RDY)
 						{
-						if (pin1stat == PIN_RDY)
+						if (chkpin(pin1dat))
 							{
-							if (chkpin(pin1dat))
-								{
-								evt.evt = E1_ACC;
-								}
-							else 
-								{
-								evt.evt = E1_WPIN;		//wrong pin
-								bit_clear(crdst.data, CRD_CAP0);	//do not capture
-								}
+							evt.evt = E1_ACC;
 							}
 						else 
 							{
-							evt.evt = E1_WPIN;			//wrong pin
+							evt.evt = E1_WPIN;		//wrong pin
 							bit_clear(crdst.data, CRD_CAP0);	//do not capture
 							}
 						}
-					if (evt.evt == E1_ACC)		//if card ok
+					else 
 						{
-						if (check_atb(1))				//check atb first
+						evt.evt = E1_WPIN;			//wrong pin
+						bit_clear(crdst.data, CRD_CAP0);	//do not capture
+						}
+					}
+				if (evt.evt == E1_ACC)		//if card ok
+					{
+					if (check_atb(1))				//check atb first
+						{
+						if (check_apb(1))					//anti-passback?
 							{
-							if (check_apb(1))					//anti-passback?
-								{
-								crcflags = read_ext_eeprom(MEM, CTR_FLAGS);
+							crcflags = read_ext_eeprom(MEM, CTR_FLAGS);
 #if defined(ONEDOOR)
-								crcflags |= 0x02;
+							crcflags |= 0x02;
 #endif
-								if (crcflags & 0x04)		//buddy mode?
+							if (crcflags & 0x04)		//buddy mode?
+								{
+								if (!buddycheck(1)) evt.evt = E1_BUD;
+								}
+							if (evt.evt == E1_ACC)		//card accepted
+								{
+								if (crdst.data & 0x01)	//door latch?
 									{
-									if (!buddycheck(1)) evt.evt = E1_BUD;
+									if ((dr1stat == DOOR_NO) || (dr1stat == DOOR_SOP) && input(auxi2))
+										{
+										ToggleDoor(1);
+										}
+									else
+										{
+										evt.evt = 0x00;
+										}
 									}
-								if (evt.evt == E1_ACC)
+								else if ((dr1stat == DOOR_NO) && input(auxi2))
 									{
 									relay_on(1, 0);
 									if (!input(door1) && !input(auxi1))
@@ -1078,11 +1098,10 @@ static char oldmin, oldio;
 										output_low(auxo1);	//local alarm off
 										}
 									}
-								}
-							else 
-								{
-								evt.evt = E1_APB;		//apb error
-								bit_clear(crdst.data, CRD_CAP0);	//not capture
+								else if ((crcflags & 0x08) == 0x00)	//not Muster reader?
+									{
+									evt.evt = 0x00;	//do not report
+									}
 								}
 							}
 						else 
@@ -1091,24 +1110,29 @@ static char oldmin, oldio;
 							bit_clear(crdst.data, CRD_CAP0);	//not capture
 							}
 						}
-					if (bit_test(crdst.data, CRD_CAP0))	//capture?
-        				{
-						cap1tick = 2;					//1 second
-            			output_high(rled1);				//capture card
-            			}
-					store_event();
+					else 
+						{
+						evt.evt = E1_APB;		//apb error
+						bit_clear(crdst.data, CRD_CAP0);	//not capture
+						}
 					}
-				else if (c == RD_SITE)
-					{
-					evt.evt = E1_WSITE;	//wrong sitecode
-					store_event();
-					}
-				else if (c == RD_FMT)
-					{ 
-					evt.evt = E1_CFMT;	//card format error
-					store_event();
-        			}
+				if (bit_test(crdst.data, CRD_CAP0))	//capture?
+       				{
+					cap1tick = 2;					//1 second
+           			output_high(rled1);				//capture card
+           			}
+				if (evt.evt != 0x00) store_event();
 				}
+			else if (c == RD_SITE)
+				{
+				evt.evt = E1_WSITE;	//wrong sitecode
+				store_event();
+				}
+			else if (c == RD_FMT)
+				{ 
+				evt.evt = E1_CFMT;	//card format error
+				store_event();
+       			}
 			pin1stat = PIN_NO;
         	rd1istat = CARD_NO;
 			}
@@ -1148,13 +1172,13 @@ static char oldmin, oldio;
 #if defined(ONEDOOR)
 			crcflags |= 0x02;
 #endif
-			c = 0;
+/*			c = 0;
 			if (crcflags & 0x02)					//if single door
 				{
 				if (dr1stat == DOOR_NO) c = 1;
 				}
 			else if (dr2stat == DOOR_NO) c = 1;
-			if ((c == 1) && input(auxi3))
+			if ((c == 1) && input(auxi3))*/
 				{
 				if (cardfmt == FMT_MAG) c = magcard(2);
 				else c = wiegcard(2);
@@ -1195,10 +1219,28 @@ static char oldmin, oldio;
 										}
 									if (evt.evt == E2_ACC)
 										{
-										relay_on(1, 0);
-										if (!input(door1) && !input(auxi1))
+										if (crdst.data & 0x01)	//door latch?
 											{
-											output_low(auxo1);	//local alarm off
+											if ((dr1stat == DOOR_NO) || (dr1stat == DOOR_SOP) && input(auxi2))
+												{
+												ToggleDoor(1);
+												}
+											else
+												{
+												evt.evt = 0x00;
+												}
+											}
+										else if ((dr1stat == DOOR_NO) && input(auxi2))
+											{
+											relay_on(1, 0);
+											if (!input(door1) && !input(auxi1))
+												{
+												output_low(auxo1);	//local alarm off
+												}
+											}
+										else if ((crcflags & 0x08) == 0x00)	//not Muster reader?
+											{
+											evt.evt = 0x00;	//do not report
 											}
 										}		
 									}
@@ -1210,10 +1252,28 @@ static char oldmin, oldio;
 										}
 									if (evt.evt == E2_ACC)
 										{
-										relay_on(2, 0);
-										if (!input(door2))
+										if (crdst.data & 0x01)	//door latch?
 											{
-											output_low(auxo2);	//door2 alarm off
+											if ((dr2stat == DOOR_NO) || (dr2stat == DOOR_SOP) && input(auxi3))
+												{
+												ToggleDoor(2);
+												}
+											else
+												{
+												evt.evt = 0x00;
+												}
+											}
+										else if ((dr2stat == DOOR_NO) && input(auxi3))
+											{
+											relay_on(2, 0);
+											if (!input(door2))
+												{
+												output_low(auxo2);	//door2 alarm off
+												}
+											}
+										else if ((crcflags & 0x08) == 0x00)	//not Muster reader?
+											{
+											evt.evt = 0x00;	//do not report
 											}
 										}
 									}
@@ -1235,7 +1295,7 @@ static char oldmin, oldio;
 						cap2tick = 2;					//1 second
             			output_high(rled2);			//capture card
             			}
-					store_event();
+					if (evt.evt != 0x00) store_event();
 					}
 				else if (c == RD_SITE)
 					{
@@ -3641,6 +3701,48 @@ int32 tsec;
 		return 0;
 		}
 	return 0;				
+}
+//---------------------------------------------------------------------
+//---------------------------------------------------------------------
+void ToggleDoor(unsigned char dr)
+{
+
+	if (dr == 1)	//if door 1
+		{
+		if (dr1stat == DOOR_SOP)
+			{
+			output_low(relay1);	//relay1 off
+			output_low(gled1);	//green led1 off
+			if (crcflags & 0x02) output_low(gled2);
+			dr1stat = DOOR_NO;	//set normal
+			evt.evt = E1_LATC;
+			}
+		else	//open door
+			{
+			dr1stat = DOOR_SOP;		//set open
+			output_high(relay1);	//relay1 on
+			output_high(gled1);		//green led1 on
+			if (crcflags & 0x02) output_high(gled2);
+			evt.evt = E1_LATO;
+			}
+		}
+	else	//assume door 2
+		{
+		if (dr2stat == DOOR_SOP)
+			{
+			output_low(relay2);	//relay2 off
+			output_low(gled2);	//green led2 off
+			dr2stat = DOOR_NO;	//set normal
+			evt.evt = E2_LATC;
+			}
+		else	//open door
+			{
+			dr2stat = DOOR_SOP;		//set open
+			output_high(relay2);	//relay2 on
+			output_high(gled2);		//green led2 on
+			evt.evt = E2_LATO;
+			}
+		}
 }
 //---------------------------------------------------------------------
 //---------------------------------------------------------------------
