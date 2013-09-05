@@ -36,7 +36,12 @@
 //							 Fixed reader 2 LED operation errors in single door mode
 //							 Fixed latching open when not armed
 //							 Door open timezone now closes a door set/latched open
-
+//Version: 2.13 - 02/10/12 - Toggledoor LED flash moved to inside timer1
+//							 Relay activation counts added (command 0xf2)
+//							 Default settings applied on initial power up
+//							 Accomodation cards added
+//							 Door open timezone now always unlocks regardless of door state
+//							 Fixed door 1 left open state failing to report door closed
 #include <18F6722.H>
 
 //#define	ONEDOOR
@@ -93,7 +98,7 @@
 
 
 #define major_ver	0x02			//software version
-#define minor_ver	12
+#define minor_ver	13
 
 #use delay(clock=40000000, RESTART_WDT)
 #use rs232(baud = 9600, xmit = PIN_C6, rcv = PIN_C7, RESTART_WDT, ERRORS)
@@ -114,6 +119,7 @@
 #include <stdlib.h>
 #include "mem200.c"
 #include "25C512spi.c"
+//#include <bootloader.h>
 //
 #define	relay1	PIN_A5			//relay 1
 //#define	relay2	PIN_A4		//relay 2 (Ver 1.1)
@@ -510,6 +516,15 @@ enum RDR_STATS {RDR_NO, RDR_PIN};
 //Holidays
 #define	HOLS		CBASE + 420 
 
+//Relay activation counters
+#define R1ACT		CBASE + 494		//relay 1 activation count (max 10^6)
+#define R2ACT		CBASE + 497		//relay 2 activation count (max 10^6)
+
+#define FIRSTUSE	CBASE + 500		//flag to determine initial use
+
+//Accommodation cards
+#define ACCOMCARDS		CBASE + 501		//20 cards @ 4 bytes each. 1st 10 = door 1; 2nd 10 = door 2
+
 enum INP_TYPES {INP_NO, INP_TAMP, INP_ARM, INP_SW, INP_PULSE, INP_REP};
  
 //Door monitoring flags
@@ -571,10 +586,10 @@ char tbuf[256], evtsent;
 char buff[MAGDIGS + 1];    
 char apb, curhour, newhour;
 long drtc;
-int32 lastread1, lastread2;
+int32 lastread1, lastread2, r1count, r2count;
 int readcount1, readcount2, readtimer1, readtimer2;
 char latchrly1, latchrly2, latchtime;
-char flashcnt, flashdelay;
+char flashcnt;
 char buddytime;
 
 struct evtst
@@ -656,8 +671,11 @@ long dayofyear(void);
 char chkpin(char *pdat);
 char check_apb(char rdr);
 char buddycheck(char rdr);
+void loadfw(void);
 void ToggleDoor(unsigned char dr);
-
+char LEDflash, LEDcnt, LEDcntloop, LEDstop;
+float LEDcntfp;
+void rcount(void);
 char dr1atg, dr2atg;
 
 //---------------------------------------------------------------------
@@ -667,7 +685,6 @@ char dr1atg, dr2atg;
 void clock_isr(void)
 {
 char x;
-	
 	if (!--tick)				//250mS timer
 		{
 		tout = 1;
@@ -710,6 +727,50 @@ char x;
 
 	readtimer1++;						//Timers for 3x swipe = latch lock
 	readtimer2++;
+
+	if (LEDflash != 0)					//Flash LED to indicate toggledoor
+		{
+		LEDcntfp = LEDcnt;
+		if ((LEDcntfp / 2) == (LEDcnt / 2))	//even cnt = LED off
+			{
+			if (LEDflash == 1) 
+				{
+				output_low(gled1);
+	        	if (crcflags & 0x02) output_low(gled2);
+				}
+			else
+				{
+				output_low(gled2);
+	        	if (crcflags & 0x02) output_low(gled1);
+				}
+			}
+		else 								//odd cnt = LED on
+			{
+			if (LEDflash == 1) 
+				{
+				output_high(gled1);
+	        	if (crcflags & 0x02) output_high(gled2);
+				}
+			else
+				{
+				output_high(gled2);
+	        	if (crcflags & 0x02) output_high(gled1);
+				}
+			}
+		LEDcntloop++;
+		if (LEDcntloop == 3)				//3 runs = 156mS per flash
+			{
+			LEDcnt++;
+			LEDcntloop = 0;
+			}
+		if (LEDcnt >= LEDstop)				//stop LED flash
+			{
+			LEDcnt = 0;
+			LEDflash = 0;
+			r1tout = true;					//prevent gled remaining lit for strike time
+			r2tout = true;
+			}
+		}
 }
 //---------------------------------------------------------------------
 //Timer 2 interrupt routine 2.4mS
@@ -717,7 +778,6 @@ char x;
 #int_timer2
 void timer2_isr(void)
 {
-
 	if (rxstat == RX_PRO) 
 		{
 		if (!--rxtick) rxstat = RX_NO;		//Serial rx timer
@@ -766,7 +826,6 @@ void ext0_isr(void)
 #int_ext1
 void ext1_isr(void)
 {
-
 	if (cardfmt == FMT_MAG)					//mag card
 		{
 		if (rd2istat == CARD_NO)			//0 = rdr2 idle
@@ -903,9 +962,10 @@ void ext3_isr(void)
 #int_rda
 void serial_isr(void) 
 {
-char ch;
-
+	char ch;
 	ch = getc();
+
+
 //	ch = RCREG;
 	if (rxstat == RX_NO)						//if no message in progress
 		{
@@ -930,7 +990,6 @@ char ch;
 		++rxcnt;
 		rxtick = 10;							//serial rx time-out
 		}
-
 /*	ch = getc();
 //	ch = RCREG;
 	if (rxstat == RX_NO)						//if no message in progress
@@ -956,7 +1015,10 @@ char ch;
 		if (rxcnt > rxsize) rxstat = RX_DATA;
 		rxtick = 10;							//serial rx time-out
 		}*/
+
 }
+
+
 //---------------------------------------------------------------------------
 //Main program
 //---------------------------------------------------------------------
@@ -1037,18 +1099,27 @@ static char oldmin, oldio;
 	init_rtc();     							//initialize real time clock
 	initcrc();									//initialize controller
 	setup_readers();
-//	output_high(led);
-
 	onesec = 0;
-
 	output_low(txon);							//RS485 = RX
-//	output_low(led);							//led off
 	newhour = 99;								//force a apb reset
-	if (!input(PIN_F5))
+
+//If first ever use set to known state
+	if (read_ext_eeprom(MEM, FIRSTUSE) != 0x101010)
+		{
+		set_defaults(1);
+		write_ext_eeprom(MEM, R1ACT, 0x00);		//Zero relay 1 activation count
+		write_ext_eeprom(MEM, R2ACT, 0x00);		//Zero relay 2 activation count
+		write_ext_eeprom(MEM, FIRSTUSE, 0x101010);
+		}	
+	r1count = read_ext_eeprom(MEM, R1ACT);		//read relay activation counters
+	r2count = read_ext_eeprom(MEM, R2ACT);
+
+	if (!input(PIN_F5))							//DIP SW6
 		{
 		output_high(led); 
 		clear_events(0);
 		clear_cards();
+		set_defaults(1);
 		output_low(led);
 		}
 	output_low(led); 
@@ -1073,28 +1144,33 @@ static char oldmin, oldio;
 	latchrly2 = 0;
 	latchtime = 25;
 
+	LEDflash = 0;
+
 	buddytime = 10;
 
 	ioinit();									//initialize io
-    
+
 while (true)
     	{
-        restart_wdt();
+		restart_wdt();
 //check for illegal pin1stat
 		if (pin1stat > PIN_RDY) pin1stat = PIN_NO;
 //check for illegal pin2stat
 		if (pin2stat > PIN_RDY) pin2stat = PIN_NO;
 //check door modes
-		if ((dr1stat == DOOR_TZOP) || (dr1stat == DOOR_SOP))
-			{									//if open on timezone or set open
-			output_high(relay1);
-			output_high(gled1);
-			if (crcflags & 0x02) output_high(gled2);
-			}
-		if ((dr2stat == DOOR_TZOP) || (dr2stat == DOOR_SOP))
-			{									//if open on timezone or set open
-			output_high(relay2);
-			output_high(gled2);
+		if (LEDflash == 0)		//only if not performing a toggledoor LED flash
+			{
+			if ((dr1stat == DOOR_TZOP) || (dr1stat == DOOR_SOP))
+				{									//if open on timezone or set open
+				output_high(relay1);
+				output_high(gled1);
+				if (crcflags & 0x02) output_high(gled2);
+				}
+			if ((dr2stat == DOOR_TZOP) || (dr2stat == DOOR_SOP))
+				{									//if open on timezone or set open
+				output_high(relay2);
+				output_high(gled2);
+				}
 			}
 //check reader1 in
 		if (rd1istat == CARD_RDY)				//reader1 in
@@ -1497,7 +1573,8 @@ while (true)
 								}
 							else if (dr1stat == DOOR_LOP)	//left open?
 								{
-								if (!input(door2) && !input(auxi1)) 
+//								if (!input(door2) && !input(auxi1)) 
+								if (!input(door1)) 			//not sure why it checked door2 or arming input?? - meant it didn't work!
 									{
 									output_low(auxo1);		//local alarm off
 									dr1stat = DOOR_NO;		//door normal
@@ -1902,7 +1979,7 @@ while (true)
 				if (pollnext == pollseq)
 					{
 					if (rxstat == RX_POLL) txpoll();
-					else txpoll_data();
+					else txpoll_data();					
 					}
 				else
 					{
@@ -2154,11 +2231,45 @@ int32 crd;
 char check_card(char rdr)
 {
 char acc, db, bf[6];
+char c1, c2, c3, c4, isaccomm;
+long n;
 
 	read_rtc();								//get current time
 	db = read_ext_eeprom(MEM, CARD_DB);		//card database
 	crdst.pin.w = 0x00000000;
 	crdst.data = 0x00;
+
+//Check if the card is an accommodation card first; if not run db searches
+//ACCOMCARDS has room 1 cards in first 10 locations (4 bytes per card)
+//room 2 in second 10 locations
+    isaccomm = 0;
+	c1 = evt.card.b[3];
+	c2 = evt.card.b[2];
+	c3 = evt.card.b[1];
+	c4 = evt.card.b[0];
+	crdst.addr = ACCOMCARDS;
+	for (n = 0; n < 20; n++)
+		{
+		bf[0] = 4;
+		readb_ext_eeprom(crdst.addr, bf);
+		if (bf[1] == c1)
+			{
+			if (bf[2] == c2)
+				{
+				if (bf[3] == c3)
+					{
+					if (bf[4] == c4)	//card found?
+						{
+						if ((n < 10) & (rdr == 1)) isaccomm = 1;
+						if ((n > 9) & (rdr == 2)) isaccomm = 2;
+						}
+					}
+				}
+			}
+		restart_wdt();
+		crdst.addr += 4;
+		}
+
 	if (rdr == 1)
 		{
 		if (db == DB_PIN)			//card and PIN
@@ -2186,6 +2297,7 @@ char acc, db, bf[6];
 			}
 		acc = (crdst.data >> 4) & 0x0f;
 		if (acc == 0x00) return E1_AL;
+		if (isaccomm == 1) return E1_ACC;
 		if (!check_access(0, acc)) return E1_TZ;
 		if (crdst.pin.w != 0x00000000) 
 			{
@@ -2221,6 +2333,7 @@ char acc, db, bf[6];
 		evt.evt = E2_TZ;								//timezone            
 		acc = (crdst.data >> 4) & 0x0f;
 		if (acc == 0x00) return E2_AL;
+		if (isaccomm == 2) return E2_ACC;
 		if (!check_access(1, acc)) return E2_TZ;
 		if (crdst.pin.w != 0x00000000) 
 			{
@@ -2368,6 +2481,9 @@ void sendack(char nd)
 //	delay_ms(TXDEL);
 	putchar(nd);
 	while (!TRMT) restart_wdt();
+//****
+//delay_ms(10);
+//****
 	output_low(txon);						//RS485 = RX
 	output_high(led);
 }
@@ -2394,7 +2510,6 @@ short txpoll(void)
 {
 union join16 getad, putad;
 char x, cs, bf[16], *p;
-
 
 	bf[0] = 4;
 	readb_ext_eeprom(evtputl, bf);
@@ -2469,7 +2584,9 @@ short ok;
 	cnt = rxcnt - 1;
 	cs = 0;
 	for (x = 0; x < cnt; x++) cs += rxdat[x];
-	if (cs != rxdat[cnt]) return 0;
+	if (cs != rxdat[cnt])
+{ 
+return 0; }
 	x = rxdat[2];
 	switch (x)
 		{
@@ -2524,6 +2641,8 @@ short ok;
 		case 0x68:	//Clear Events
 					clear_events(false);
 					sendack(rpl);
+//					send_mod(rpl);
+//					sendack(rpl);
 					break;                  
 		case 0x69:	//Enable/disable APB
 					rxdat[2] = 5;
@@ -2570,6 +2689,8 @@ short ok;
 						else						//open door
 							{
 							dr1stat = DOOR_SOP;		//set open
+							r1count++;
+							write_ext_eeprom(MEM, R1ACT, r1count);			//increment relay count
 							output_high(relay1);	//relay1 on
 							output_high(gled1);		//green led1 on
 							if (crcflags & 0x02) output_high(gled2);
@@ -2594,6 +2715,8 @@ short ok;
 						else						//open door
 							{
 							dr2stat = DOOR_SOP;		//set open
+							r2count++;
+							write_ext_eeprom(MEM, R2ACT, r2count);			//increment relay count
 							output_high(relay2);	//relay2 on
 							output_high(gled2);		//green led2 on
 							}
@@ -2655,17 +2778,30 @@ short ok;
 					rxdat[2] = 64;
 					writeb_ext_eeprom(HOLS, &rxdat[2]);
 					sendack(rpl);
+					break;
+		case 0x76:	//Accommodation cards
+					rxdat[2] = 80;
+					writeb_ext_eeprom(ACCOMCARDS, &rxdat[2]);
+					sendack(rpl);
+					break;
 		case 0xf1:	//Set new keypad password
 					write_ext_eeprom(MEM, PASSH, rxdat[3]);
 					write_ext_eeprom(MEM, PASSL, rxdat[4]);
 					sendack(rpl);
 					break;
+		case 0xf2:	//report relay counts
+					rcount();
+					break;
 		case 0xf3:	//model of controller
 					send_mod(rpl);
 					break;
-		case 0xf5:	//blank eeprom (0xff)
+/*		case 0xf5:	//blank eeprom (0xff)
 					blank_eeprom(0, 0x7FFF);
 					sendack(rpl);
+					break;
+*/
+		case 0xf5:	//load new firmware
+					loadfw();
 					break;
 		}                               
 	return 1;
@@ -2681,6 +2817,11 @@ char x;
 
 	if (rly == 1)
 		{
+		if (dr1stat == DOOR_NO)
+			{
+			r1count++;
+			write_ext_eeprom(MEM, R1ACT, r1count);			//increment relay count
+			}	
 		output_high(relay1);							//relay 1 on
 		output_high(gled1);								//green led on
 		if (crcflags & 0x02) output_high(gled2);		//if single door
@@ -2705,6 +2846,11 @@ char x;
 		}
 	else if (rly == 2)
 		{
+		if (dr2stat == DOOR_NO)
+			{
+			r2count++;
+			write_ext_eeprom(MEM, R2ACT, r2count);			//increment relay count
+			}
 		output_high(relay2);							//relay 2 on
 		output_high(gled2);								//green led on
 		if (crcflags & 0x02) output_high(gled1);		//if single door
@@ -2803,26 +2949,28 @@ unsigned long tz;
 updz1:
 		if (op == 1)
 			{
-			if ((dr1stat == DOOR_NO) | (dr1stat == DOOR_SOP))	//added _SOP so status set if already open
-				{												//otherwise door remains open
+			if ((dr1stat != DOOR_TZOP))		//if not already open on TZ
+				{							
+				r1count++;
+				write_ext_eeprom(MEM, R1ACT, r1count);			//increment relay count
 				output_high(relay1);		//relay 1 on
 				output_high(gled1);			//green led 1 on
 				if (crcflags & 0x02) output_high(gled2);
 				evt.card.w = 0;
-				evt.evt = E1_OPTZ;		//dr1 opened
+				evt.evt = E1_OPTZ;			//dr1 opened
 				chg = true;
 				dr1stat = DOOR_TZOP;
 				}
 			}
 		else
 			{
-			if (dr1stat == DOOR_TZOP)
+			if (dr1stat == DOOR_TZOP)		//if currently open on TZ
 				{
 				evt.card.w = 0;
-				evt.evt = E1_CLTZ;		//dr1 closed
+				evt.evt = E1_CLTZ;			//dr1 closed
 				chg = true;
-				output_low(relay1);		//relay 1 off
-				output_low(gled1);		//green led 1 off
+				output_low(relay1);			//relay 1 off
+				output_low(gled1);			//green led 1 off
 				if (crcflags & 0x02) output_low(gled2);
 				dr1stat = DOOR_NO;
 				}
@@ -2845,21 +2993,21 @@ updz1:
 			else return 0;
 			}
 		x = bf[2];
-		tz = DTZ1;								//point to tz1
-		for (n = 0; n < 8; n++)					//1st 8 door timezones
+		tz = DTZ1;							//point to tz1
+		for (n = 0; n < 8; n++)				//1st 8 door timezones
 			{
 			if (bit_test(x, n))
 				{
 				if (tz_check(tz)) 
 					{
-					op = 1;		//timezone valid
+					op = 1;					//timezone valid
 					goto updz2;
 					}
 				}
-			tz += (unsigned long)DTZSIZE;		//point to next tz
+			tz += (unsigned long)DTZSIZE;	//point to next tz
 			}
 		x = bf[1];
-		for (n = 0; n < 8; n++)					//next 8 timezones
+		for (n = 0; n < 8; n++)				//next 8 timezones
 			{
 			if (bit_test(x, n))
 				{
@@ -2869,30 +3017,32 @@ updz1:
 					goto updz2;
 					}
 				}
-			tz += (unsigned long)DTZSIZE;		//point to next tz
+			tz += (unsigned long)DTZSIZE;	//point to next tz
 			}
 updz2:
 		if (op == 1)
 			{
-			if ((dr2stat == DOOR_NO) | (dr2stat == DOOR_SOP))	//added _SOP so status set if already open
-				{												//otherwise door remains open
+			if ((dr2stat != DOOR_TZOP))		//if not already open on TZ
+				{							
+				r2count++;
+				write_ext_eeprom(MEM, R2ACT, r2count);			//increment relay count
 				output_high(relay2);		//relay 2 on
 				output_high(gled2);			//green led 2 on
 				evt.card.w = 0;
-				evt.evt = E2_OPTZ;		//dr2 opened
+				evt.evt = E2_OPTZ;			//dr2 opened
 				chg = true;
 				dr2stat = DOOR_TZOP;
 				}
 			}
 		else
 			{
-			if (dr2stat == DOOR_TZOP)
+			if (dr2stat == DOOR_TZOP)		//if currently open on TZ
 				{
 				evt.card.w = 0;
-				evt.evt = E2_CLTZ;		//dr2 closed
+				evt.evt = E2_CLTZ;			//dr2 closed
 				chg = true;
-				output_low(relay2);		//relay 2 off
-				output_low(gled2);		//green led 2 off
+				output_low(relay2);			//relay 2 off
+				output_low(gled2);			//green led 2 off
 				dr2stat = DOOR_NO;
 				}
 			}
@@ -3620,7 +3770,7 @@ long addr;
 }
 //---------------------------------------------------------------------
 //set_defaults()
-//Set the CRC200 to a known default state
+//Set the CRC220 to a known default state
 //---------------------------------------------------------------------
 void set_defaults(short cf)
 {
@@ -3943,84 +4093,110 @@ int32 tsec;
 }
 //---------------------------------------------------------------------
 //---------------------------------------------------------------------
+void loadfw(void)
+{
+unsigned char x, bf[4];
+
+	x = read_ext_eeprom(MEM, PASSH);
+	if (x == rxdat[3])
+		{
+		x = read_ext_eeprom(MEM, PASSL);
+		if (x == rxdat[4])
+			{
+			output_high(txon);
+			delay_us(50);
+			putchar(0x06);
+			while (!TRMT) restart_wdt(); 
+			delay_us(50);
+			output_low(txon);
+			bf[0] = 0x00;
+			bf[1] = node;
+			write_program_memory(0x200000, bf, 2);
+			reset_cpu();
+			}
+		}
+	output_high(txon);
+	delay_us(50);
+	putchar(0x15);
+	while (!TRMT) restart_wdt(); 
+	delay_us(50);
+	output_low(txon);
+
+}							
+//---------------------------------------------------------------------
+//---------------------------------------------------------------------
 void ToggleDoor(unsigned char dr)
 {
-
-	flashcnt = 0;
-	flashdelay = 200;
-	if (dr == 1)	//if door 1
+	LEDcnt = 1;						//begin LEDflash with LED on
+	LEDstop = LEDcnt + 5;			//run through LEDflash so 2 flashes
+	if (dr == 1)					//if door 1
 		{
+		LEDflash = 1;
 		if (dr1stat == DOOR_SOP)
 			{
 			output_low(relay1);		//relay1 off
-			while (flashcnt < 3)
-				{
-				output_high(gled1);
-				if (crcflags & 0x02) output_high(gled2);
-				delay_ms(flashdelay);
-				output_low(gled1);
-				if (crcflags & 0x02) output_low(gled2);
-				delay_ms(flashdelay*3);
-				flashcnt++;
-				}
+			LEDcnt = 2;				//begin LEDflash with LED off
 			dr1stat = DOOR_NO;		//set normal
 			evt.evt = E1_LATC;
 			}
-//		else	//open door
 		else if (dr1stat != DOOR_TZOP)
 			{
 			dr1stat = DOOR_SOP;		//set open
 			output_high(relay1);	//relay1 on
-			while (flashcnt < 4)
-				{
-				output_low(gled1);
-				if (crcflags & 0x02) output_low(gled2);
-				delay_ms(flashdelay*3);
-				output_high(gled1);
-				if (crcflags & 0x02) output_high(gled2);
-				delay_ms(flashdelay);
-				flashcnt++;
-				}
 			evt.evt = E1_LATO;
 			}
 		}
-	else	//assume door 2
+	else							//assume door 2
 		{
+		LEDflash = 2;
 		if (dr2stat == DOOR_SOP)
 			{
 			output_low(relay2);		//relay2 off
-			while (flashcnt < 3)
-				{
-				output_high(gled2);
-				if (crcflags & 0x02) output_high(gled1);
-				delay_ms(flashdelay);
-				output_low(gled2);
-				if (crcflags & 0x02) output_low(gled1);
-				delay_ms(flashdelay*3);
-				flashcnt++;
-				}
+			LEDcnt = 2;				//begin LEDflash with LED off
 			dr2stat = DOOR_NO;		//set normal
 			evt.evt = E2_LATC;
-//			update_doortz(2);
 			}
-//		else	//open door
 		else if (dr2stat != DOOR_TZOP)
 			{
 			dr2stat = DOOR_SOP;		//set open
 			output_high(relay2);	//relay2 on
-			while (flashcnt < 4)
-				{
-				output_low(gled2);
-				if (crcflags & 0x02) output_low(gled1);
-				delay_ms(flashdelay*3);
-				output_high(gled2);
-				if (crcflags & 0x02) output_high(gled1);
-				delay_ms(flashdelay);
-				flashcnt++;
-				}
 			evt.evt = E2_LATO;
 			}
 		}
 }
 //---------------------------------------------------------------------
 //---------------------------------------------------------------------
+void rcount(void)		//Send relay counts to host
+{
+	int32 rnum;
+	char cs, x, cv, rc;
+	char bf[12];
+
+	for (rc=0; rc<2; rc++)
+		{
+		if (rc == 0) rnum = read_ext_eeprom(MEM, R1ACT);
+		else rnum = read_ext_eeprom(MEM, R2ACT);
+		bf[0] = (0x80  |node);
+		bf[1] = 0x0a;
+		bf[2] = 0xf2;
+		bf[3] = rc;
+		for (x=4; x<12; x++)
+			{
+			cv = ((rnum >> (44 - (x*4))) & 0x0f);
+			if (cv < 0x0A) bf[x] = (0x30 + cv);
+			else bf[x] = (0x37 + cv);
+			}
+		delay_ms(1);
+		output_high(txon);					//RS485 = TX
+		delay_ms(TXDEL);
+		cs = 0;
+		for (x=0; x<12; x++)
+			{
+			putchar(bf[x]);
+			cs += bf[x];
+			}
+		putchar(cs);
+		while (!TRMT) restart_wdt();
+		output_low(txon);				//RS485 = RX
+	}
+}
