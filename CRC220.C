@@ -42,9 +42,11 @@
 //							 Accomodation cards added
 //							 Door open timezone now always unlocks regardless of door state
 //							 Fixed door 1 left open state failing to report door closed
+//Version: 2.14 - 27/06/13 - PIN only functionality added - with access levels
+
 #include <18F6722.H>
 
-//#define	ONEDOOR
+#define	ONEDOOR
 
 #if defined(ONEDOOR)
 #define MODVER 5
@@ -98,7 +100,7 @@
 
 
 #define major_ver	0x02			//software version
-#define minor_ver	13
+#define minor_ver	14
 
 #use delay(clock=40000000, RESTART_WDT)
 #use rs232(baud = 9600, xmit = PIN_C6, rcv = PIN_C7, RESTART_WDT, ERRORS)
@@ -386,6 +388,39 @@ enum RDR_STATS {RDR_NO, RDR_PIN};
 #define	CRD_OFF0	CBASE + 40		//card offset high
 #define	ALTIME		CBASE + 41		//local alarm time-out
 #define	ALTRIGS		CBASE + 42		//local alarm triggers
+
+//PIN numbers
+ #define	PIN1_L		CBASE + 43		//pin 1 low byte
+ #define	PIN1_H		CBASE + 44		//pin 1 high byte
+ #define	PIN2_L		CBASE + 45		//pin 2 low byte
+ #define	PIN2_H		CBASE + 46		//pin 2 high byte
+ #define	PIN3_L		CBASE + 47		//pin 3 low byte
+ #define	PIN3_H		CBASE + 48		//pin 3 high byte
+ #define	PIN4_L		CBASE + 49		//pin 4 low byte
+ #define	PIN4_H		CBASE + 50		//pin 4 high byte
+ #define	PIN5_L		CBASE + 51		//pin 5 low byte
+ #define	PIN5_H		CBASE + 52		//pin 5 high byte
+ #define	PIN6_L		CBASE + 53		//pin 6 low byte
+ #define	PIN6_H		CBASE + 54		//pin 6 high byte
+ #define	PIN7_L		CBASE + 55		//pin 7 low byte
+ #define	PIN7_H		CBASE + 56		//pin 7 high byte
+ #define	PIN8_L		CBASE + 57		//pin 8 low byte
+ #define	PIN8_H		CBASE + 58		//pin 8 high byte
+ #define	PIN9_L		CBASE + 59		//pin 9 low byte
+ #define	PIN9_H		CBASE + 60		//pin 9 high byte
+ #define	PIN10_L		CBASE + 61		//pin 10 low byte
+ #define	PIN10_H		CBASE + 62		//pin 10 high byte  
+//PIN Acess Levels
+ #define	PINAL1		CBASE + 63
+ #define	PINAL2		CBASE + 64
+ #define	PINAL3		CBASE + 65
+ #define	PINAL4		CBASE + 66
+ #define	PINAL5		CBASE + 67
+ #define	PINAL6		CBASE + 68
+ #define	PINAL7		CBASE + 69
+ #define	PINAL8		CBASE + 70
+ #define	PINAL9		CBASE + 71
+ #define	PINAL10		CBASE + 72
 	
 //Timezone 2
 #define	TZ21FH		CBASE + 70		//timezone 2 from hour
@@ -572,7 +607,7 @@ union join32
 char tick, rd1itick, rd2itick, r1tick, r2tick, crcflags;
 char rd1idat[32], rd1ibits, *rd1ip, rd1istat, rd1iax;
 char rd2idat[32], rd2ibits, *rd2ip, rd2istat, rd2iax;
-char pin1dat[6], pin1cnt, pin1stat, *pin1p, pin1tick, pinlen;
+ char pin1dat[6], pin1cnt, pin1stat, *pin1p, pin1tick, pinlen, pinlist; 
 char pin2dat[6], pin2cnt, pin2stat, *pin2p, pin2tick;
 char rxdat[1300], rxstat, rxsize, rxtick, rxcnt;
 char rex1cnt, rex2cnt, door1cnt, door2cnt, node, drmon1, drmon2;
@@ -589,7 +624,6 @@ long drtc;
 int32 lastread1, lastread2, r1count, r2count;
 int readcount1, readcount2, readtimer1, readtimer2;
 char latchrly1, latchrly2, latchtime;
-char flashcnt;
 char buddytime;
 
 struct evtst
@@ -617,8 +651,8 @@ struct crdstruct
 
 struct lastcard
 {
-int32 card;
-int32 sec;
+	int32 card;
+	int32 sec;
 } lastcard1, lastcard2;
 
 char const DEFAULT_SET[] = {1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 10, 0, 0, 4, 2, 4, 6, 0, 0, 0,
@@ -628,6 +662,7 @@ char wiegcard(char rdr);
 char magcard(char rdr);
 short magcard_par(char cx);
 char check_card(char rdr);
+short check_pin(char *ps, char rdr); 
 long dig2b(char *s);
 void reset_apb(void);
 void store_event(void);
@@ -686,91 +721,92 @@ void clock_isr(void)
 {
 char x;
 	if (!--tick)				//250mS timer
-		{
+	{
 		tout = 1;
 		tick = 5;
-		}
+	}
 	if (rd1istat == CARD_PRO) 
-		{
+	{
 		if (!--rd1itick)
-			{
+		{
 			x = rd1ibits;
 			while (x & 0x07)
-				{
+			{
 				rd1iax <<= 1;
 				++x;
-				}
+			}
 			*rd1ip = rd1iax;
 			if (rd1ibits > 8) rd1istat = CARD_RDY; else rd1istat = CARD_PIN;
-			}
 		}
+	}
 	if (rd2istat == CARD_PRO) 
-		{
+	{
 		if (!--rd2itick)
-			{
+		{
 			x = rd2ibits;
 			while (x & 0x07)
-				{
+			{
 				rd2iax <<= 1;
 				++x;
-				}
+			}
 			*rd2ip = rd2iax;
 			if (rd2ibits > 8) rd2istat = CARD_RDY; else rd2istat = CARD_PIN;
-			}
 		}
-	if (!--pin1tick) 
-		{
-		pin1stat = PIN_NO;				//PIN 1 time-out
-		}
-	if (!--pin2tick) pin2stat = PIN_NO;	//PIN 2 time-out
-	if (!--alarmtick) alarmtout = true;
+	}
+ 	if (pin1stat == PIN_PRO)  
+	{ 
+ 		if (!--pin1tick) pin1stat = PIN_NO;	//PIN 1 time-out 
+	} 
+ 	if (pin2stat == PIN_PRO)  
+ 	{ 
+ 		if (!--pin2tick) pin2stat = PIN_NO;	//PIN 2 time-out 
+ 	} 
+
 
 	readtimer1++;						//Timers for 3x swipe = latch lock
 	readtimer2++;
 
 	if (LEDflash != 0)					//Flash LED to indicate toggledoor
-		{
+	{
 		LEDcntfp = LEDcnt;
 		if ((LEDcntfp / 2) == (LEDcnt / 2))	//even cnt = LED off
-			{
+		{
 			if (LEDflash == 1) 
-				{
+			{
 				output_low(gled1);
 	        	if (crcflags & 0x02) output_low(gled2);
-				}
+			}
 			else
-				{
+			{
 				output_low(gled2);
 	        	if (crcflags & 0x02) output_low(gled1);
-				}
 			}
+		}
 		else 								//odd cnt = LED on
-			{
-			if (LEDflash == 1) 
-				{
-				output_high(gled1);
-	        	if (crcflags & 0x02) output_high(gled2);
-				}
-			else
-				{
-				output_high(gled2);
-	        	if (crcflags & 0x02) output_high(gled1);
-				}
-			}
+		if (LEDflash == 1) 
+		{
+			output_high(gled1);
+        	if (crcflags & 0x02) output_high(gled2);
+		}
+		else
+		{
+			output_high(gled2);
+        	if (crcflags & 0x02) output_high(gled1);
+		}
 		LEDcntloop++;
 		if (LEDcntloop == 3)				//3 runs = 156mS per flash
-			{
+		{
 			LEDcnt++;
 			LEDcntloop = 0;
-			}
+		}
 		if (LEDcnt >= LEDstop)				//stop LED flash
-			{
+		{
 			LEDcnt = 0;
 			LEDflash = 0;
 			r1tout = true;					//prevent gled remaining lit for strike time
 			r2tout = true;
-			}
 		}
+	}
 }
 //---------------------------------------------------------------------
 //Timer 2 interrupt routine 2.4mS
@@ -779,11 +815,11 @@ char x;
 void timer2_isr(void)
 {
 	if (rxstat == RX_PRO) 
-		{
+	{
 		if (!--rxtick) rxstat = RX_NO;		//Serial rx timer
-		}
+	}
 	if (!--tmr2tick)						//500mS counter
-		{
+	{
 		tmr2tick = 208;
 		if (!--r1tick) r1tout = true;		//relay 1 timer
 		if (!--r2tick) r2tout = true;		//relay 2 timer
@@ -791,7 +827,7 @@ void timer2_isr(void)
 		if (!--cap2tick) output_low(rled2);	//capture off
 		if (!--dr1tick) dr1tout = true;		//door 1 timer 
 		if (!--dr2tick) dr2tout = true;		//door 2 timer 
-		}
+	}
 	t2tout = true;
 }
 //---------------------------------------------------------------------
@@ -801,24 +837,25 @@ void timer2_isr(void)
 void ext0_isr(void)
 {
 	if (rd2istat == CARD_NO)			//0 = no rdr2 data
-		{
+	{
 		rd2ip = rd2idat;
 		rd2iax = 0x00;					//zero bit
 		rd2ibits = 1;
 		rd2istat = CARD_PRO;
 		rd2itick = 2;					//reader 1 timer (300mS)
-		}
-	else if (rd2istat == CARD_PRO)		//1 = rdr2 data in progress
-		{
+	}
+	else 
+	if (rd2istat == CARD_PRO)		//1 = rdr2 data in progress
+	{
 		if (rd2ibits < 80)
-			{
+		{
 			rd2iax <<= 1;
 			bit_clear(rd2iax, 0);		//zero bit
 			++rd2ibits;
 			if (!(rd2ibits & 0x07)) *rd2ip++ = rd2iax;
 			rd2itick = 2;
-			}
 		}
+	}
 }
 //---------------------------------------------------------------------
 //Interrupt 1 routine (portb1 rdr2 - mag=clk, wieg=D1)
@@ -827,51 +864,51 @@ void ext0_isr(void)
 void ext1_isr(void)
 {
 	if (cardfmt == FMT_MAG)					//mag card
-		{
+	{
 		if (rd2istat == CARD_NO)			//0 = rdr2 idle
-			{
+		{
 			rd2ip = rd2idat;
 			if (!input(rdr2dat)) rd2iax = 0x01;	//one bit
 			else rd2iax = 0x00;				//zero bit
 			rd2ibits = 1;
 			rd2itick = 2;					//reader 2 timer (300mS)
 			rd2istat = CARD_PRO;			//card in progress
-			}
-		else if (rd2istat == CARD_PRO)		//1 = rdr2 data in progress
-			{
+		}
+		else 
+		if (rd2istat == CARD_PRO)		//1 = rdr2 data in progress
+		{
 			if (rd2ibits < 248)
-				{
+			{
 				rd2iax <<= 1;
 				if (!input(rdr2dat)) bit_set(rd2iax, 0);
 				else bit_clear(rd2iax, 0);
 				++rd2ibits;
 				if (!(rd2ibits & 0x07)) *rd2ip++ = rd2iax;
 				rd2itick = 2;
-				}
 			}
 		}
-	else
-		{									//wiegand card
-		if (rd2istat == CARD_NO)			//0 = no rdr2 data
-			{
-			rd2ip = rd2idat;
-			rd2iax = 0x01;					//one bit
-			rd2ibits = 1;
-			rd2istat = CARD_PRO;
-			rd2itick = 2;					//reader 1 timer (300mS)
-			}
-		else if (rd2istat == CARD_PRO)		//1 = rdr2 data in progress
-			{
-			if (rd2ibits < 80)
-				{
-				rd2iax <<= 1;
-				bit_set(rd2iax, 0);			//one bit
-				++rd2ibits;
-				if (!(rd2ibits & 0x07)) *rd2ip++ = rd2iax;
-				rd2itick = 2;
-				}
-			}
+	}
+	else								//wiegand card
+	if (rd2istat == CARD_NO)			//0 = no rdr2 data
+	{
+		rd2ip = rd2idat;
+		rd2iax = 0x01;					//one bit
+		rd2ibits = 1;
+		rd2istat = CARD_PRO;
+		rd2itick = 2;					//reader 1 timer (300mS)
+	}
+	else 
+	if (rd2istat == CARD_PRO)		//1 = rdr2 data in progress
+	{
+		if (rd2ibits < 80)
+		{
+			rd2iax <<= 1;
+			bit_set(rd2iax, 0);			//one bit
+			++rd2ibits;
+			if (!(rd2ibits & 0x07)) *rd2ip++ = rd2iax;
+			rd2itick = 2;
 		}
+	}
 }
 //---------------------------------------------------------------------
 //Interrupt 2 routine (Portb2 rdr1 - mag=dat, wieg=D0)
@@ -881,24 +918,25 @@ void ext2_isr(void)
 {
 
 	if (rd1istat == CARD_NO)			//0 = no rdr1 data
-		{
+	{
 		rd1ip = rd1idat;
 		rd1iax = 0x00;					//zero bit
 		rd1ibits = 1;
 		rd1istat = CARD_PRO;
 		rd1itick = 2;					//reader 1 timer (300mS)
-		}
-	else if (rd1istat == CARD_PRO)		//1 = rdr1 data in progress
-		{
+	}
+	else 
+	if (rd1istat == CARD_PRO)		//1 = rdr1 data in progress
+	{
 		if (rd1ibits < 80)
-			{
+		{
 			rd1iax <<= 1;
 			bit_clear(rd1iax, 0);		//zero bit
 			++rd1ibits;
 			if (!(rd1ibits & 0x07)) *rd1ip++ = rd1iax;
 			rd1itick = 2;
-			}
 		}
+	}
 }
 //---------------------------------------------------------------------
 //Interrupt 3 routine (Portb3 rdr1 - mag=clk, wieg=D1) 
@@ -908,51 +946,51 @@ void ext3_isr(void)
 {
 
 	if (cardfmt == FMT_MAG)					//mag card
-		{
+	{
 		if (rd1istat == CARD_NO)			//0 = rdr1 idle
-			{
+		{
 			rd1ip = rd1idat;
 			if (!input(rdr1dat)) rd1iax = 0x01;	//one bit
 			else rd1iax = 0x00;				//zero bit
 			rd1ibits = 1;
 			rd1itick = 2;					//reader 1 timer (300mS)
 			rd1istat = CARD_PRO;			//card in progress
-			}
-		else if (rd1istat == CARD_PRO)		//1 = rdr1 data in progress
-			{
+		}
+		else 
+		if (rd1istat == CARD_PRO)		//1 = rdr1 data in progress
+		{
 			if (rd1ibits < 248)
-				{
+			{
 				rd1iax <<= 1;
 				if (!input(rdr1dat)) bit_set(rd1iax, 0);
 				else bit_clear(rd1iax, 0);
 				++rd1ibits;
 				if (!(rd1ibits & 0x07))	*rd1ip++ = rd1iax;
 				rd1itick = 2;   
-				}
 			}
 		}
-	else
-		{									//wiegand card
-		if (rd1istat == CARD_NO)			//0 = no rdr1 data
-			{
-			rd1ip = rd1idat;
-			rd1iax = 0x01;					//one bit
-			rd1ibits = 1;
-			rd1istat = CARD_PRO;
-			rd1itick = 2;					//reader 1 timer (300mS)
-			}
-		else if (rd1istat == CARD_PRO)		//1 = rdr1 data in progress
-			{
-			if (rd1ibits < 80)
-				{
-				rd1iax <<= 1;
-				bit_set(rd1iax, 0);			//one bit
-				++rd1ibits;
-				if (!( rd1ibits & 0x07)) *rd1ip++ = rd1iax;
-				rd1itick = 2;
-				}
-			}
+	}
+	else								//wiegand card
+	if (rd1istat == CARD_NO)			//0 = no rdr1 data
+	{
+		rd1ip = rd1idat;
+		rd1iax = 0x01;					//one bit
+		rd1ibits = 1;
+		rd1istat = CARD_PRO;
+		rd1itick = 2;					//reader 1 timer (300mS)
+	}
+	else 
+	if (rd1istat == CARD_PRO)			//1 = rdr1 data in progress
+	{
+		if (rd1ibits < 80)
+		{
+			rd1iax <<= 1;
+			bit_set(rd1iax, 0);			//one bit
+			++rd1ibits;
+			if (!( rd1ibits & 0x07)) *rd1ip++ = rd1iax;
+			rd1itick = 2;
 		}
+	}
 }
 //---------------------------------------------------------------------------
 //Serial interrupt for RS485 comms
@@ -965,60 +1003,31 @@ void serial_isr(void)
 	char ch;
 	ch = getc();
 
-
-//	ch = RCREG;
 	if (rxstat == RX_NO)						//if no message in progress
-		{
+	{
 		rxdat[0] = ch;
 		if (!bit_test(ch, 7)) rxstat = RX_POLL;	//poll ready
 		else 
-			{
+		{
 			rxcnt = 1;
 			rxtick = 10;						//serial rx time-out
 			rxstat = RX_PRO;					//message in progress
-			}
 		}
-	else if (rxstat == RX_PRO)					//if message in progress
-		{
+	}
+	else 
+	if (rxstat == RX_PRO)						//if message in progress
+	{
 		if (rxcnt == 1)
-			{
+		{
 			rxsize = ch;
-			}
+		}
 		if (rxcnt < 250) rxdat[rxcnt] = ch;
 		if (rxcnt > rxsize)	
 		rxstat = RX_DATA;
 		++rxcnt;
 		rxtick = 10;							//serial rx time-out
-		}
-/*	ch = getc();
-//	ch = RCREG;
-	if (rxstat == RX_NO)						//if no message in progress
-		{
-		rxp = rxdat;
-		*rxp++ = ch;
-		if (!bit_test(ch, 7)) rxstat = RX_POLL;	//poll ready
-		else 
-			{
-			rxstat = RX_PRO;					//message in progress
-			rxcnt = 0;
-			rxtick = 10;						//serial rx time-out
-			}
-		}
-	else if (rxstat == RX_PRO)					//if message in progress
-		{
-		if (rxcnt == 0)
-			{
-			rxsize = ch;
-			}
-		++rxcnt;
-		if (rxcnt < 250) *rxp++ = ch;
-		if (rxcnt > rxsize) rxstat = RX_DATA;
-		rxtick = 10;							//serial rx time-out
-		}*/
-
+	}
 }
-
-
 //---------------------------------------------------------------------------
 //Main program
 //---------------------------------------------------------------------
@@ -1049,8 +1058,6 @@ static char oldmin, oldio;
     portb = 0x00;
     set_tris_b(0x3f);
 	portd = 0x00;
-//    set_tris_d(0x2f);							//portd
-//    porte = 0x00;
     setup_psp(PSP_DISABLED);
     porte = 0x00;
     set_tris_e(0x03);							//porte
@@ -1058,7 +1065,6 @@ static char oldmin, oldio;
 	set_tris_g(0x1f);
     setup_timer_1(T1_INTERNAL | T1_DIV_BY_8);	//52mS interval
 	setup_timer_2(T2_DIV_BY_16, 250, 6);
-//	T4CON = 0x00;								//timer4 off
     enable_interrupts(INT_TIMER1);				//Timer1 int enable
 	enable_interrupts(INT_TIMER2);				//timer2 int enable
 
@@ -1087,11 +1093,11 @@ static char oldmin, oldio;
 	rxstat = RX_NO;
     init_ext_eeprom();							//initialize eeprom
 	do
-		{
+	{
 		x = read_ext_eeprom(MEM, MTEST);
 		if (x != 0x55) write_ext_eeprom(MEM, MTEST, 0x55);
 		restart_wdt();
-		}
+	}
 	while (x != 0x55);
 	output_high(led);
 
@@ -1105,23 +1111,23 @@ static char oldmin, oldio;
 
 //If first ever use set to known state
 	if (read_ext_eeprom(MEM, FIRSTUSE) != 0x101010)
-		{
+	{
 		set_defaults(1);
 		write_ext_eeprom(MEM, R1ACT, 0x00);		//Zero relay 1 activation count
 		write_ext_eeprom(MEM, R2ACT, 0x00);		//Zero relay 2 activation count
 		write_ext_eeprom(MEM, FIRSTUSE, 0x101010);
-		}	
+	}	
 	r1count = read_ext_eeprom(MEM, R1ACT);		//read relay activation counters
 	r2count = read_ext_eeprom(MEM, R2ACT);
 
-	if (!input(PIN_F5))							//DIP SW6
-		{
+	if (!input(PIN_F5))							//DIP SW6 - Perform Reset to defaults
+	{
 		output_high(led); 
 		clear_events(0);
 		clear_cards();
 		set_defaults(1);
 		output_low(led);
-		}
+	}
 	output_low(led); 
 	delay_ms(100);
 	output_high(led);
@@ -1151,7 +1157,7 @@ static char oldmin, oldio;
 	ioinit();									//initialize io
 
 while (true)
-    	{
+    {
 		restart_wdt();
 //check for illegal pin1stat
 		if (pin1stat > PIN_RDY) pin1stat = PIN_NO;
@@ -1159,69 +1165,69 @@ while (true)
 		if (pin2stat > PIN_RDY) pin2stat = PIN_NO;
 //check door modes
 		if (LEDflash == 0)		//only if not performing a toggledoor LED flash
-			{
+		{
 			if ((dr1stat == DOOR_TZOP) || (dr1stat == DOOR_SOP))
-				{									//if open on timezone or set open
+			{									//if open on timezone or set open
 				output_high(relay1);
 				output_high(gled1);
 				if (crcflags & 0x02) output_high(gled2);
-				}
+			}
 			if ((dr2stat == DOOR_TZOP) || (dr2stat == DOOR_SOP))
-				{									//if open on timezone or set open
+			{									//if open on timezone or set open
 				output_high(relay2);
 				output_high(gled2);
-				}
 			}
+		}
 //check reader1 in
 		if (rd1istat == CARD_RDY)				//reader1 in
-			{
+		{
 			if (!input(auxi2)) rd1istat = CARD_NO;	//not armed, reset rd1istat or card read while not armed gets processed once armed
 			else								// is armed
-				{
+			{
 				if (cardfmt == FMT_MAG) c = magcard(1);
 				else c = wiegcard(1);
 				if (c == RD_OK)
-					{
+				{
 					evt.evt = check_card(1);
 					if (evt.evt == E1_PIN)
-						{
+					{
 						if (pin1stat == PIN_RDY)
-							{
+						{
 							if (chkpin(pin1dat)) evt.evt = E1_ACC;
 							else 
-								{
-								evt.evt = E1_WPIN;		//wrong pin
-								bit_clear(crdst.data, CRD_CAP0);	//do not capture
-								}
-							}
-						else 
 							{
-							evt.evt = E1_WPIN;			//wrong pin
-							bit_clear(crdst.data, CRD_CAP0);	//do not capture
+								evt.evt = E1_WPIN;					//wrong pin
+								bit_clear(crdst.data, CRD_CAP0);	//do not capture
 							}
 						}
-					if (evt.evt == E1_ACC)		//if card ok
+						else 
 						{
-						if (check_atb(1))				//check atb first
+							evt.evt = E1_WPIN;						//wrong pin
+							bit_clear(crdst.data, CRD_CAP0);		//do not capture
+						}
+					}
+					if (evt.evt == E1_ACC)							//if card ok
+					{
+						if (check_atb(1))							//check atb first
+						{
+							if (check_apb(1))						//anti-passback?
 							{
-							if (check_apb(1))					//anti-passback?
-								{
 								crcflags = read_ext_eeprom(MEM, CTR_FLAGS);
 #if defined(ONEDOOR)
 								crcflags |= 0x02;
 #endif
-								if (crcflags & 0x04)		//buddy mode?
-									{
+								if (crcflags & 0x04)				//buddy mode?
+								{
 									if (!buddycheck(1)) evt.evt = E1_BUD;
-									}
-								if (evt.evt == E1_ACC)		//card accepted
-									{
+								}
+								if (evt.evt == E1_ACC)				//card accepted
+								{
 									latchrly1 = 0x00;
 									if ((readtimer1 < latchtime) && (evt.card.w == lastread1)) //re-present of a card within time
-										{
-										evt.evt = 0x00;		//no need for multiple 'Granted'
+									{
+										evt.evt = 0x00;				//no need for multiple 'Granted'
 										switch (readcount1)
-											{
+										{
 											case SECONDREAD1:
 												lastread1 = evt.card.w;
 												readcount1++;
@@ -1231,93 +1237,139 @@ while (true)
 												latchrly1 = 0x01;
 												readcount1 = 0x00;
 												break;
-											}
 										}
-									else 				 //different to previous read
-										{
+									}
+									else 							 //different to previous read
+									{
 										readcount1 = 0x01;
 										lastread1 = evt.card.w;
-										}
-									readtimer1 = 0;		//reset counter
-//									if ((dr1stat == DOOR_NO) && input(auxi2))  **changed - unlock regardless of door state
+									}
+									readtimer1 = 0;					//reset counter
 									relay_on(1, 0);
 									if (drmon1 != 0)
-										{
-										if (!input(door1)) output_low(auxo1);	//if door closed turn local alarm off
+									{
+										if (!input(door1)) output_low(auxo1);				//if door closed turn local alarm off
 										else if ((crcflags & 0x08) == 0x00) evt.evt = 0x00;	//door is open - if not muster controller do not report
-										}
+									}
 									if ((dr1stat == DOOR_SOP) && ((crcflags & 0x08) == 0x00)) evt.evt = 0x00; //copes with no door monitoring and toggledoor
 									if ((crdst.data & 0x01) && (latchrly1 == 0x01))	ToggleDoor(1);										
-									}
-								}
-							else 
-								{
-								evt.evt = E1_APB;		//apb error
-								bit_clear(crdst.data, CRD_CAP0);	//not capture
 								}
 							}
-						else 
+							else 
 							{
-							evt.evt = E1_APB;		//apb error
-							bit_clear(crdst.data, CRD_CAP0);	//not capture
+								evt.evt = E1_APB;					//apb error
+								bit_clear(crdst.data, CRD_CAP0);	//not capture
 							}
 						}
-					if (bit_test(crdst.data, CRD_CAP0))	//capture?
-       					{
-						cap1tick = 2;					//1 second
-           				output_high(rled1);				//capture card
-           				}
+						else 
+						{
+							evt.evt = E1_APB;						//apb error
+							bit_clear(crdst.data, CRD_CAP0);		//not capture
+						}
+					}
+					if (bit_test(crdst.data, CRD_CAP0))				//capture?
+       				{
+						cap1tick = 2;								//1 second
+           				output_high(rled1);							//capture card
+           			}
 					if (evt.evt != 0x00) store_event();
-					}
-				else if (c == RD_SITE)
-					{
-					evt.evt = E1_WSITE;	//wrong sitecode
+				}
+				else 
+				if (c == RD_SITE)
+				{
+					evt.evt = E1_WSITE;								//wrong sitecode
 					store_event();
-					}
-				else if (c == RD_FMT)
-					{ 
-					evt.evt = E1_CFMT;	//card format error
+				}
+				else 
+				if (c == RD_FMT)
+				{ 
+					evt.evt = E1_CFMT;								//card format error
 					store_event();
-       				}
+       			}
 				pin1stat = PIN_NO;
         		rd1istat = CARD_NO;
-				}
 			}
-		else if (rd1istat == CARD_PIN)			//pin data
-			{
-			if (pin1stat == PIN_NO)
+		}
+ 		else 
+		if (rd1istat == CARD_PIN)									//pin data 
+ 		{ 
+			if ((pin1stat == PIN_RDY) && (pin1cnt >= 0x04))	pin1stat = PIN_PRO; //key pressed during wait for card - cancel wait
+			if (pin1stat == PIN_NO) 
+ 			{ 
+ 				pin1tick = 100;										//5 secs time-out to enter whole PIN
+ 				pin1p = pin1dat;									//point to pin data 
+ 				pin1stat = PIN_PRO;									//pin in progress 
+				pin1cnt = 0; 
+ 				pinlen = read_ext_eeprom(MEM, PIN_LEN); 
+ 			} 
+ 			if (pin1stat == PIN_PRO) 
+ 			{ 
+ 				x = rd1idat[0]; 
+ 				if (rd1ibits == 4) x >>= 4; 
+ 				if (x == 0x23) x = 0xb;		//RH320 # 
+ 				x &= 0x0F; 
+ 				x |= 0x30; 
+ 				if (isdigit(x)) *pin1p++ = x; 
+ 				if (x == 0x3a) pin1stat = PIN_NO;
+				else 
+				if (++pin1cnt == 0x04)
 				{
-				pin1tick = 100;					//10 secs time-out
-				pin1p = pin1dat;				//point to pin data
-				pin1stat = PIN_PRO;				//pin in progress
-				pin1cnt = 0;
-				pinlen = read_ext_eeprom(MEM, PIN_LEN);
-				}
-			if (pin1stat == PIN_PRO)
-				{
-				x = rd1idat[0];
-				if (rd1ibits == 4) x >>= 4;
-				if (x == 0x23) x = 0xb;		//RH320 #
-				x &= 0x0F;
-				x |= 0x30;
-				if (isdigit(x)) *pin1p++ = x;
-				if (x == 0x3a) pin1stat = PIN_NO;					
-				else if ((++pin1cnt >= pinlen) || (x == 0x3b))
+					if (pinlen == 0x04) 							//if system PIN len = 4 act on it now
 					{
-					*pin1p = 0x00;
-					pin1tick = 100;
-					pin1stat = PIN_RDY;
+						pin1tick = 60;								//3 secs to present card
+						pin1stat = PIN_RDY;
 					}
 				}
-			rd1istat = CARD_NO;
-			} 
-		else if (rd1istat > CARD_PIN) rd1istat = CARD_NO;
-//check reader2 in
-		if (rd2istat == CARD_RDY)	//reader2 in
-			{
-			if (!input(auxi3)) rd2istat = CARD_NO;	//not armed, reset rd2istat or card read while not armed gets processed once armed
-			else					//is armed
+				else 
+				if (pin1cnt == 0x05)								//check for 4 digits plus #
 				{
+					if (x == 0x3b)									//# is last key  pressed - act on the 4 digit pin
+					{									
+						pin1dat[4] = 0x00;							//clear out digits 5 & 6 as they cause
+						pin1dat[5] = 0x00;							//incorrect calc if previous PIN was 6 digits
+						pinlist = check_pin(pin1dat,1);			
+						if (pinlist == 0x00)						//PIN is not in the list of 10
+						{
+							evt.evt = E1_WPIN;						//report wrong PIN
+							pin1stat = PIN_NO;
+						}
+						else 
+						if (pinlist == 0x01)						//PIN is in list of 10 and acc lev valid
+						{
+							relay_on(1, 0);							//relay 1 on
+							dr1stat = DOOR_REL;						//door released
+							evt.evt = E1_APINOK;					//report PIN ok
+							pin1stat = PIN_NO;
+						}
+						else 
+						if (pinlist == 0x02)						//PIN is in list but acc lev not currently valid
+						{
+							evt.evt = E1_APINNF;						//report PIN currently invalid
+							pin1stat = PIN_NO;
+						}
+						store_event();
+					}
+				}
+				else 
+				if ((pin1cnt == 0x06) && (pinlen == 0x06))
+				{
+					if (check_pin(pin1dat,1) == 0x00)
+					{
+						pin1tick = 60;								//3 secs to present card
+						pin1stat = PIN_RDY;
+					}
+				}
+			} 
+			rd1istat = CARD_NO;
+		} 
+		else 
+		if (rd1istat > CARD_PIN) rd1istat = CARD_NO;
+		//check reader2 in
+		if (rd2istat == CARD_RDY)					//reader2 in
+		{
+			if (!input(auxi3)) rd2istat = CARD_NO;	//not armed, reset rd2istat or card read while not armed gets processed once armed
+			else									//is armed
+			{
 				crcflags = read_ext_eeprom(MEM, CTR_FLAGS);
 #if defined(ONEDOOR)
 				crcflags |= 0x02;
@@ -1325,45 +1377,45 @@ while (true)
 				if (cardfmt == FMT_MAG) c = magcard(2);
 				else c = wiegcard(2);
 				if (c == RD_OK)
-					{
+				{
 					evt.evt = check_card(2);
 					if (evt.evt == E2_PIN)
-						{
+					{
 						if (pin2stat == PIN_RDY)
-							{
+						{
 							if (chkpin(pin2dat)) evt.evt = E2_ACC;
 							else 
-								{
-								evt.evt = E2_WPIN;		//wrong pin
-								bit_clear(crdst.data, CRD_CAP1);	//do not capture
-								}
-							}
-						else 
 							{
-							evt.evt = E2_WPIN;			//wrong pin
-							bit_clear(crdst.data, CRD_CAP1);	//do not capture
+								evt.evt = E2_WPIN;					//wrong pin
+								bit_clear(crdst.data, CRD_CAP1);	//do not capture
 							}
 						}
-					if (evt.evt == E2_ACC)		//if card ok
+						else 
 						{
-						if (check_atb(2))				//check atb first
-							{
-							if (check_apb(2))					//anti-passback?
+							evt.evt = E2_WPIN;						//wrong pin
+							bit_clear(crdst.data, CRD_CAP1);		//do not capture
+						}
+					}
+					if (evt.evt == E2_ACC)							//if card ok
+					{
+						if (check_atb(2))							//check atb first
+						{
+							if (check_apb(2))						//anti-passback?
+							{	
+								if (crcflags & 0x02)				//if single door
 								{
-								if (crcflags & 0x02)			//if single door
+									if (crcflags & 0x04)			//buddy mode?
 									{
-									if (crcflags & 0x04)		//buddy mode?
-										{
 										if (!buddycheck(2)) evt.evt = E2_BUD;
-										}
+									}
 									if (evt.evt == E2_ACC)
-										{
+									{
 										latchrly1 = 0x00;
 										if (readtimer2 < latchtime && evt.card.w == lastread2) //re-present of a card within time
-											{
-											evt.evt = 0x00;	//no need for multiple 'Granted'
+										{
+											evt.evt = 0x00;			//no need for multiple 'Granted'
 											switch (readcount2)
-												{
+											{
 												case SECONDREAD2:
 													lastread2 = evt.card.w;
 													readcount2++;
@@ -1373,466 +1425,523 @@ while (true)
 													readcount2 = 0x00;
 													latchrly1 = 0x01;
 													break;
-												}
 											}
-										else  //different to previous read
-											{
+										}
+										else  						//different to previous read
+										{
 											readcount2 = 0x01;
 											lastread2 = evt.card.w;
-											}
-										readtimer2 = 0;	//reset counter
-//										if ((dr1stat == DOOR_NO) && input(auxi2)) **changed - unlock regardless of door state
+										}
+										readtimer2 = 0;				//reset counter
 										relay_on(1, 0);
 										if (drmon1 != 0)
-											{
-											if (!input(door1)) output_low(auxo1);	//if door closed turn local alarm off
+										{
+											if (!input(door1)) output_low(auxo1);				//if door closed turn local alarm off
 											else if ((crcflags & 0x08) == 0x00) evt.evt = 0x00;	//door is open - if not muster controller do not report
-											}
+										}
 										if ((dr1stat == DOOR_SOP) && ((crcflags & 0x08) == 0x00)) evt.evt = 0x00; //copes with no door monitoring and toggledoor
 										if ((crdst.data & 0x01) && (latchrly1 == 0x01))	ToggleDoor(1);
-										}		
-									}
-								else							//2 door
-									{
-									if (crcflags & 0x04)		//buddy mode?
-										{
-										if (!buddycheck(2)) evt.evt = E2_BUD;
-										}
-									if (evt.evt == E2_ACC)
-										{
-										latchrly2 = 0x00;
-										if (readtimer2 < latchtime && evt.card.w == lastread2) //re-present of a card within time
-											{
-											evt.evt = 0x00;	//no need for multiple 'Granted'
-											switch (readcount2)
-												{
-												case SECONDREAD2:
-													lastread2 = evt.card.w;
-													readcount2++;
-													break;
-												case THIRDREAD2:
-													lastread2 = 0x00000000;
-													readcount2 = 0x00;
-													latchrly2 = 0x01;
-													break;
-												}
-											}
-										else  //different to previous read
-											{
-											readcount2 = 0x01;
-											lastread2 = evt.card.w;
-											}
-										readtimer2 = 0;	//reset counter
-//										if ((dr2stat == DOOR_NO) && input(auxi3)) **changed - unlock regardless of door state
-										relay_on(2, 0);
-										if (drmon2 !=0)
-											{
-											if (!input(door2)) output_low(auxo2);	//if door closed turn local alarm off
-											else if ((crcflags & 0x08) == 0x00) evt.evt = 0x00;	//door is open - if not muster controller do not report
-											}
-										if ((dr2stat == DOOR_SOP) && ((crcflags & 0x08) == 0x00)) evt.evt = 0x00; //copes with no door monitoring and toggledoor
-										if ((crdst.data & 0x01) && (latchrly2 == 0x01))	ToggleDoor(2);
-										}
-									}
+									}		
 								}
-							else 
+								else								//2 door
+								if (crcflags & 0x04)				//buddy mode?
 								{
+									if (!buddycheck(2)) evt.evt = E2_BUD;
+								}
+								if (evt.evt == E2_ACC)
+								{
+									latchrly2 = 0x00;
+									if (readtimer2 < latchtime && evt.card.w == lastread2) //re-present of a card within time
+									{
+										evt.evt = 0x00;				//no need for multiple 'Granted'
+										switch (readcount2)
+										{
+											case SECONDREAD2:
+												lastread2 = evt.card.w;
+												readcount2++;
+												break;
+											case THIRDREAD2:
+												lastread2 = 0x00000000;
+												readcount2 = 0x00;
+												latchrly2 = 0x01;
+												break;
+										}
+									}
+									else  							//different to previous read
+									{
+										readcount2 = 0x01;
+										lastread2 = evt.card.w;
+									}
+									readtimer2 = 0;	//reset counter
+									relay_on(2, 0);
+									if (drmon2 !=0)
+									{
+										if (!input(door2)) output_low(auxo2);				//if door closed turn local alarm off
+										else if ((crcflags & 0x08) == 0x00) evt.evt = 0x00;	//door is open - if not muster controller do not report
+									}
+									if ((dr2stat == DOOR_SOP) && ((crcflags & 0x08) == 0x00)) evt.evt = 0x00; //copes with no door monitoring and toggledoor
+									if ((crdst.data & 0x01) && (latchrly2 == 0x01))	ToggleDoor(2);
+								}
+							}
+							else 
+							{
 								evt.evt = E2_APB;					//apb error
 								bit_clear(crdst.data, CRD_CAP1);	//not capture
-								}
-							}
-						else 
-							{
-							evt.evt = E2_APB;						//apb error
-							bit_clear(crdst.data, CRD_CAP1);		//not capture
 							}
 						}
+						else 
+						{
+							evt.evt = E2_APB;						//apb error
+							bit_clear(crdst.data, CRD_CAP1);		//not capture
+						}
+					}
 					if (bit_test(crdst.data, CRD_CAP1))				//capture?
-        				{
+        			{
 						cap2tick = 2;								//1 second
             			output_high(rled2);							//capture card
-            			}
+            		}
 					if (evt.evt != 0x00) store_event();
-					}
-				else if (c == RD_SITE)
-					{
+				}
+				else 
+				if (c == RD_SITE)
+				{
 					evt.evt = E2_WSITE;
 					store_event();
-					}
-				else if (c == RD_FMT)
-					{ 
+				}
+				else 
+				if (c == RD_FMT)
+				{ 
 					evt.evt = E2_CFMT;
 					store_event();
-    	    		}
-				}
+    	    	}
+			}
 			pin2stat = PIN_NO;
         	rd2istat = CARD_NO;
-			}
-		else if (rd2istat == CARD_PIN)			//pin data
-			{
+		}
+		else 
+		if (rd2istat == CARD_PIN)						//pin data
+		{
+			if ((pin2stat == PIN_RDY) && (pin2cnt >= 0x04))	pin2stat = PIN_PRO; //key pressed during wait for card
 			if (pin2stat == PIN_NO)
-				{
-				pin2tick = 100;					//10 secs time-out
-				pin2p = pin2dat;				//point to pin data
-				pin2stat = PIN_PRO;				//pin in progress
+			{
+				pin2tick = 100;							//5 secs time-out to enter whole PIN				
+				pin2p = pin2dat;						//point to pin data
+				pin2stat = PIN_PRO;						//pin in progress
 				pin2cnt = 0;
 				pinlen = read_ext_eeprom(MEM, PIN_LEN);
-				}
+			}
 			if (pin2stat == PIN_PRO)
-				{
+			{
 				x = rd2idat[0]; 
-				if (rd2ibits == 4) x >>= 4;	//4 bit burst
-				if (x == 0x23) x = 0x0b;		//RH320 #
+				if (rd2ibits == 4) x >>= 4;				//4 bit burst
+				if (x == 0x23) x = 0x0b;				//RH320 #
 				x &= 0x0F;			//get pin
 				x |= 0x30;
 				if (isdigit(x)) *pin2p++ = x;
 				if (x == 0x3a) pin2stat = PIN_NO;					
-				else if ((++pin2cnt >= pinlen) || (x == 0x3b))
+				else 
+				if (++pin2cnt == 0x04)
+				{
+					if (pinlist == 0x00)				//Not in list of 10 stored PIN - wait for card
 					{
-					*pin2p = 0x00;
-					pin2tick = 100;
-					pin2stat = PIN_RDY;
+						pin2tick = 60;					//3 secs to present card
+						pin2stat = PIN_RDY;
 					}
 				}
-			rd2istat = CARD_NO;
-			} 
-		else if (rd2istat > CARD_PIN) rd2istat = CARD_NO;
-		if (t2tout)
-			{
-//Check for rex1 activity			
-			if (!input(rex1))	//if rex1 low
+				else 
+				if (pin2cnt == 0x05)
 				{
-//				if ((dr1stat == DOOR_NO) && input(auxi2)) **changed - unlock regardless of door state
-				if (input(auxi2))
+					if (x == 0x3b)						//# is last key  pressed
 					{
-					if (rex1cnt > 0)
+						pin2dat[4] = 0x00;				//clear out digits 5 & 6 - causes incorrect calc
+						pin2dat[5] = 0x00;
+						pinlist = check_pin(pin2dat,1);			
+						if (pinlist == 0x00)			//Not in list of 10
 						{
+							evt.evt = E1_WPIN;
+							pin2stat = PIN_NO;
+						}
+						else 
+						if (pinlist == 0x01)			//PIN is in list of 10 stored PINs and acc lev valid
+						{
+							relay_on(2, 0);				//relay 2 on
+							dr2stat = DOOR_REL;			//door released
+							evt.evt = E2_APINOK;	
+							pin2stat = PIN_NO;
+						}
+						else 
+						if (pinlist == 0x02)			//PIN is in list but acc lev not currently valid
+						{
+							evt.evt = E2_APINNF;
+							pin2stat = PIN_NO;
+						}
+						store_event();
+					}
+				}
+				else 
+				if ((pin2cnt == 0x06) && (pinlen == 0x06))
+				{
+					if (check_pin(pin2dat,1) == 0x00)
+					{
+						pin2tick = 60;					//3 secs to present card
+						pin2stat = PIN_RDY;
+					}
+				}
+			} 
+			rd2istat = CARD_NO;
+		} 
+		else 
+		if (rd2istat > CARD_PIN) rd2istat = CARD_NO;
+		if (t2tout)
+		{
+		//Check for rex1 activity			
+			if (!input(rex1))							//if rex1 low
+			{
+				if (input(auxi2))
+				{
+					if (rex1cnt > 0)
+					{
 						if (!--rex1cnt)
-							{
+						{
 							//report rex1 event only if door normal or door is open AND a muster controller
 							if (dr1stat == DOOR_NO) zeroevent(E1_REX);	//rex 1 event
 							else if ((crcflags & 0x08) != 0x00) zeroevent(E1_REX);	//rex 1 event
 							relay_on(1, 0);			//relay 1 on
-							}
 						}
 					}
 				}
+			}
 			else
-				{
+			{
 				rex1cnt = DBOUNCE;
-				}
-//Check door1
+			}
+			//Check door1
 			if (drmon1 != 0)
-				{
+			{
 				crcflags = read_ext_eeprom(MEM, CTR_FLAGS);	//controller flags
 				if (input(door1))	//door open?
-					{
+				{
 					if (door1cnt)
-						{
+					{
 						if (!--door1cnt) 
-							{
+						{
 							if (dr1stat == DOOR_NO)
-								{
+							{
 								output_high(auxo1);			//local alarm
 								zeroevent(E1_DFORCE);		//door forced open
 								x = read_ext_eeprom(MEM, ALTRIGS);
 								if (bit_test(x, 1)) 
-									{
+								{
 									alarmtick = read_ext_eeprom(MEM, ALTIME);
 									alarmtout = false;
-									}
-								dr1stat = DOOR_FOP;			//door forced open
 								}
-							else if (dr1stat == DOOR_REL)
-								{
+								dr1stat = DOOR_FOP;			//door forced open
+							}
+							else 
+							if (dr1stat == DOOR_REL)
+							{
 								if (crcflags & 0x10) dr1atg = 1;	//anti-tailgate disabled so flag and don't lock
 								else
-									{
+								{
 									output_low(relay1);		//relay 1 off
 									output_low(gled1);		//green led 1 off
 									if (crcflags & 0x02) output_low(gled2);	//if single door
-									}
+								}
 								dr1stat = DOOR_RELOP;	//door released & open
 								x = read_ext_eeprom(MEM, DOOR1_TM);	//door open time
 								dr1tick = x * 2;
 								dr1tout = 0;
-								}
 							}
 						}
 					}
+				}
 				else
-					{	
-					if (door1cnt < DBOUNCE)
+				if (door1cnt < DBOUNCE)
+				{
+					if (++door1cnt >= DBOUNCE)			//door is closed
+					{
+						if (dr1stat == DOOR_FOP)		//forced open
 						{
-						if (++door1cnt >= DBOUNCE)			//door is closed
+							dr1stat = DOOR_NO;	
+							zeroevent(E1_DCLOSE);		//door close
+						}
+						else 
+						if (dr1stat == DOOR_LOP)		//left open?
+						{
+//							if (!input(door2) && !input(auxi1)) 
+							if (!input(door1)) 			//not sure why it checked door2 or tamper input?? - meant it didn't work!
 							{
-							if (dr1stat == DOOR_FOP)		//forced open
-								{
-								dr1stat = DOOR_NO;	
-								zeroevent(E1_DCLOSE);		//door close
-								}
-							else if (dr1stat == DOOR_LOP)	//left open?
-								{
-//								if (!input(door2) && !input(auxi1)) 
-								if (!input(door1)) 			//not sure why it checked door2 or arming input?? - meant it didn't work!
-									{
-									output_low(auxo1);		//local alarm off
-									dr1stat = DOOR_NO;		//door normal
-									zeroevent(E1_DCLOSE);	//door close
-									}
-								}
-							else if (dr1stat == DOOR_RELOP) dr1stat = DOOR_NO;						
+								output_low(auxo1);		//local alarm off
+								dr1stat = DOOR_NO;		//door normal
+								zeroevent(E1_DCLOSE);	//door close
 							}
 						}
+						else 
+						if (dr1stat == DOOR_RELOP) dr1stat = DOOR_NO;						
 					}
+				}
 				if (dr1tout)								//door open time-out
-					{
+				{
 					if ((dr1stat == DOOR_NO) && (dr1atg == 1) && (input(door1))) //atg disabled & door is open
-						{
+					{
 						zeroevent(E1_DLOPEN);				//left open
 						dr1stat = DOOR_LOP;					//door left open
 						output_high(auxo1);					//local alarm on
 						dr1atg = 0;
-						}
+					}
 					if (dr1stat == DOOR_RELOP)				//if released and open
-						{
+					{
 						zeroevent(E1_DLOPEN);				//left open
 						dr1stat = DOOR_LOP;					//door left open
 						output_high(auxo1);					//local alarm on
-						}
-					dr1tout = 0;
 					}
+					dr1tout = 0;
 				}
+			}
 			if (r1tout)										//relay 1 timer 
-				{
+			{
 				if (dr1stat == DOOR_REL)
-					{
+				{
 					output_low(relay1);						//relay 1 off
 					output_low(gled1);						//green led 1 off
 					if (crcflags & 0x02) output_low(gled2);	//if single door
 					if ((drmon1 != 0) && (!input(door1))) zeroevent(E1_DNOPEN);	//not opened
 					dr1stat = DOOR_NO;
-					}
-				else if (dr1stat == DOOR_NO)
-					{
+				}
+				else 
+				if (dr1stat == DOOR_NO)
+				{
 					output_low(relay1);						//relay 1 off
 					output_low(gled1);						//green led 1 off
 					if (crcflags & 0x02) output_low(gled2);	//if single door
 					dr1stat = DOOR_NO;
-					}
+				}
 //added to lock door if ((ATG disabled) or (relay operated while door was open))
-				else if (((dr1stat == DOOR_RELOP) && (dr1atg == 1)) | ((dr1stat == DOOR_FOP) | (dr1stat == DOOR_LOP)))
-					{
+				else 
+				if (((dr1stat == DOOR_RELOP) && (dr1atg == 1)) | ((dr1stat == DOOR_FOP) | (dr1stat == DOOR_LOP)))
+				{
 					output_low(relay1);						//relay 1 off
 					output_low(gled1);						//green led 1 off
 					if (crcflags & 0x02) output_low(gled2);	//if single door
-					}
-				r1tout = false;
 				}
+				r1tout = false;
+			}
 //Check for rex2 activity
 			if (!input(rex2))								//if rex2 low
-				{
+			{
 //				if ((dr2stat == DOOR_NO) && input(auxi3)) **changed - unlock regardless of door state
 				if (input(auxi3))
-					{
+				{
 					if (rex2cnt > 0)
-						{
+					{
 						if (!--rex2cnt)
-							{
+						{
 							//report rex2 event only if door normal or door is open AND a muster controller
 							if (dr2stat == DOOR_NO) zeroevent(E2_REX);		//rex 1 event
 							else if ((crcflags & 0x08) != 0x00) zeroevent(E2_REX);		//rex 1 event
 							relay_on(2, 0);					//relay 2 on
-							}
 						}
 					}
 				}
+			}
 			else
-				{
+			{
 				rex2cnt = DBOUNCE;
-				}
+			}
 //Check door2
 			if ((drmon2 != 0) && !(crcflags & 0x02))
-				{
+			{
 				crcflags = read_ext_eeprom(MEM, CTR_FLAGS);	//controller flags
 				if (input(door2))							//door open?
-					{
+				{
 					if (door2cnt)
-						{
+					{
 						if (!--door2cnt) 
-							{
+						{
 							if (dr2stat == DOOR_NO)
-								{
+							{
 								output_high(auxo2);			//door2 alarm
 								zeroevent(E2_DFORCE); 		//door forced open
 								x = read_ext_eeprom(MEM, ALTRIGS);
 								if (bit_test(x, 1)) 
-									{
+								{
 									alarmtick = read_ext_eeprom(MEM, ALTIME);
 									alarmtout = false;
-									}
-								dr2stat = DOOR_FOP;			//door forced open
 								}
-							else if ((dr2stat == DOOR_REL))
-								{
+								dr2stat = DOOR_FOP;			//door forced open
+							}
+							else 
+							if ((dr2stat == DOOR_REL))
+							{
 								if (crcflags & 0x20) dr2atg = 1;	//anti-tailgate disabled so flag and don't lock
 								else
-									{
+								{
 									output_low(relay2);		//relay 2 off
 									output_low(gled2);		//green led 2 off
-									}
+								}
 								dr2stat = DOOR_RELOP;	//door released & open
 								x = read_ext_eeprom(MEM, DOOR2_TM);	//door open time
 								dr2tick = x * 2;
 								dr2tout = 0;
-								}
 							}
 						}
 					}
+				}
 				else
-					{	
-					if (door2cnt < DBOUNCE)
+				if (door2cnt < DBOUNCE)
+				{
+					if (++door2cnt >= DBOUNCE)			//door is closed
+					{
+						if (dr2stat == DOOR_FOP) 		//forced open
 						{
-						if (++door2cnt >= DBOUNCE)			//door is closed
+							dr2stat = DOOR_NO;		
+							zeroevent(E2_DCLOSE);		//door close
+						}
+						else 
+						if (dr2stat == DOOR_LOP)	//left open?
+						{
+							if (!input(door2))
 							{
-							if (dr2stat == DOOR_FOP) 		//forced open
-								{
-								dr2stat = DOOR_NO;		
-								zeroevent(E2_DCLOSE);		//door close
-								}
-							else if (dr2stat == DOOR_LOP)	//left open?
-								{
-								if (!input(door2))
-									{
-									output_low(auxo2);		//door2 alarm off
-									dr2stat = DOOR_NO;		//door normal
-									zeroevent(E2_DCLOSE);	//door close
-									}
-								}
-							else if (dr2stat == DOOR_RELOP) dr2stat = DOOR_NO;						
+								output_low(auxo2);		//door2 alarm off
+								dr2stat = DOOR_NO;		//door normal
+								zeroevent(E2_DCLOSE);	//door close
 							}
 						}
+						else 
+						if (dr2stat == DOOR_RELOP) dr2stat = DOOR_NO;						
 					}
+				}
 				if (dr2tout)								//door open time-out
-					{
+				{
 					if ((dr2stat == DOOR_NO) && (dr2atg == 1) && (input(door2))) //atg is disabled and door is open
-						{
+					{
 						zeroevent(E2_DLOPEN);				//left open
 						dr2stat = DOOR_LOP;					//door left open
 						output_high(auxo2);					//local alarm on
 						dr2atg = 0;
-						}
+					}
 					if (dr2stat == DOOR_RELOP)				//if released and open
-						{
+					{
 						zeroevent(E2_DLOPEN);				//left open
 						dr2stat = DOOR_LOP;					//door left open
 						output_high(auxo2);					//door2 alarm on
-						}
-					dr2tout = 0;
 					}
+					dr2tout = 0;
 				}
+			}
 			if (r2tout)										//relay 2 timer 
-				{
+			{
 				if (dr2stat == DOOR_REL)
-					{
+				{
 					output_low(relay2);						//relay 2 off
 					output_low(gled2);						//green led 2 off
 					if ((drmon2 != 0) && (!input(door2))) zeroevent(E2_DNOPEN);	//not opened
 					dr2stat = DOOR_NO;
-					}
-				else if (dr2stat == DOOR_NO)
-					{
+				}
+				else 
+				if (dr2stat == DOOR_NO)
+				{
 					output_low(relay2);						//relay 2 off
 					output_low(gled2);						//green led 2 off
 					dr2stat = DOOR_NO;
-					}
+				}
 //added to lock door if ((ATG disabled) or (relay operated while door was open))
-				else if (((dr2stat == DOOR_RELOP) && (dr2atg == 1)) | ((dr2stat == DOOR_FOP) | (dr2stat == DOOR_LOP)))
-					{
+				else 
+				if (((dr2stat == DOOR_RELOP) && (dr2atg == 1)) | ((dr2stat == DOOR_FOP) | (dr2stat == DOOR_LOP)))
+				{
 					output_low(relay2);						//relay 2 off
 					output_low(gled2);						//green led 2 off
-					}
-				r2tout = false;
 				}
-//Check aux input 1 (Tamper)
+				r2tout = false;
+			}
+			//Check aux input 1 (Tamper)
 			oldio = instat;									//old input status			
 			if (input(auxi1))								//input high?
-				{
+			{
 				if (!bit_test(instat, 0))					//already high?
-					{
+				{
 					if (++in1cnt == 0)
-						{
+					{
 						zeroevent(E0_TPON);					//Tamper ON
 						bit_set(instat, 0);					//input is high
 						output_high(auxo1);					//local alarm on		
-						}
 					}
 				}
-			else if (bit_test(instat, 0))					//already low?
-				{
+			}
+			else 
+			if (bit_test(instat, 0))						//already low?
+			{
 				if (++in1cnt == 0)
-					{
+				{
 					zeroevent(E0_TPOK);						//Tamper is OK
 					bit_clear(instat, 0);					//input is low
 					if (!input(door1) && !input(door2)) output_low(auxo1);	//local alarm off
-					}
 				}
-//Check aux input 2 (Arming Reader 1)
+			}
+//			else 
+//			if (!((dr1stat == DOOR_FOP) | (dr1stat == DOOR_LOP))) output_low(auxo1);
+			//Above added in 2.13 because tamper alarm was not resetting when alarm removed
+			//Removed in 2.14 because it breaks FOP alarm handling
+
+			//Check aux input 2 (Arming Reader 1)
 			if (input(auxi2))								//input high?
-				{
+			{
 				if (!bit_test(instat, 1))					//already high?
-					{
+				{
 					if (++in2cnt == 0)
-						{
+					{
 						zeroevent(E0_ARM1);					//reader 1 armed
 						bit_set(instat, 1);					//input is high
-						}
 					}
 				}
-			else if (bit_test(instat, 1))					//alredy low?
-				{
+			}
+			else 
+			if (bit_test(instat, 1))						//already low?
+			{
 				if (++in2cnt == 0)
-					{
+				{
 					zeroevent(E0_NARM1);					//reader 1 not armed
 					bit_clear(instat, 1);					//input is low
-					}
 				}
-//Check aux input 3 (Arming Reader 2)
+			}
+			//Check aux input 3 (Arming Reader 2)
 			if (input(auxi3))								//input high?
-				{
+			{
 				if (!bit_test(instat, 2))					//already high?
-					{
+				{
 					if (++in3cnt == 0)
-						{
+					{
 						zeroevent(E0_ARM2);					//reader 2 armed
 						bit_set(instat, 2);					//input is high
-						}
 					}
 				}
-			else if (bit_test(instat, 2))					//alredy low?
-				{
+			}
+			else 
+			if (bit_test(instat, 2))						//already low?
+			{
 				if (++in3cnt == 0)
-					{
+				{
 					zeroevent(E0_NARM2);					//reader 2 not armed
 					bit_clear(instat, 2);					//input is low
-					}
 				}
-//aux in 4
+			}
+			//aux in 4
 			if (input(auxi4))								//input high?
-				{
+			{
 				if (!bit_test(instat, 3))					//already high?
-					{
+				{
 					if (++in4cnt == 0)
-						{
+					{
 						zeroevent(E0_NIO4);					//input 4 open
 						bit_set(instat, 3);					//input is high
-						}
 					}
 				}
-			else if (bit_test(instat, 3))					//alredy low?
-				{
+			}
+			else 
+			if (bit_test(instat, 3))						//alredy low?
+			{
 				if (++in4cnt == 0)
-					{
+				{
 					crcflags = read_ext_eeprom(MEM, CTR_FLAGS);
 #if defined(ONEDOOR)
 					crcflags |= 0x02;
@@ -1840,160 +1949,163 @@ while (true)
 					if (crcflags & 0x01) zeroevent(E0_OPALL);	//open all doors
 					else zeroevent(E0_IO4);					//input 4 closed 
 					bit_clear(instat, 3);					//input is low
-					}
 				}
+			}
 
-//aux in 5
+			//aux in 5
 			if (input(auxi5))								//input high?
-				{
+			{
 				if (!bit_test(instat, 4))					//already high?
-					{
+				{
 					if (++in5cnt == 0)
-						{
+					{
 						zeroevent(E0_NIO5);					//input 5 open
 						bit_set(instat, 4);					//input is high
-						}
 					}
 				}
-			else if (bit_test(instat, 4))					//alredy low?
-				{
+			}
+			else 
+			if (bit_test(instat, 4))						//alredy low?
+			{
 				if (++in5cnt == 0)
-					{
+				{
 					zeroevent(E0_IO5);						//input 5 closed
 					bit_clear(instat, 4);					//input is low
-					}
 				}
-//aux in 6
+			}
+			//aux in 6
 			if (input(auxi6))								//input high?
-				{
+			{
 				if (!bit_test(instat, 5))					//already high?
-					{
+				{
 					if (++in6cnt == 0)
-						{
+					{
 						zeroevent(E0_NIO6);					//input 6 open
 						bit_set(instat, 5);					//input is high
-						}
 					}
 				}
-			else if (bit_test(instat, 5))					//alredy low?
-				{
+			}
+			else 
+			if (bit_test(instat, 5))						//alredy low?
+			{
 				if (++in6cnt == 0)
-					{
+				{
 					zeroevent(E0_IO6);						//input 6 closed
 					bit_clear(instat, 5);					//input is low
-					}
 				}
-//aux input 7 
+			}
+			//aux input 7 
 			if (input(auxi7))								//input high?
-				{
+			{
 				if (!bit_test(instat, 6))					//already high?
-					{
+				{
 					if (++in7cnt == 0)
-						{
+					{
 						zeroevent(E0_NIO7);					//input 7 open
 						bit_set(instat, 6);					//input is high
-						}
 					}
 				}
-			else if (bit_test(instat, 6))					//alredy low?
-				{
+			}
+			else 
+			if (bit_test(instat, 6))						//alredy low?
+			{
 				if (++in7cnt == 0)
-					{
+				{
 					zeroevent(E0_IO7);						//input 7 closed
 					bit_clear(instat, 6);					//input is low
-//					iocheck(0x07);
-					}
 				}
-//aux input 8
+			}
+			//aux input 8
 			if (input(auxi8))								//input high?
-				{
+			{
 				if (!bit_test(instat, 7))					//already high?
-					{
+				{
 					if (++in8cnt == 0)
-						{
+					{
 						zeroevent(E0_NIO8);					//input 8 open
 						bit_set(instat, 7);					//input is high
-						}
 					}
 				}
-			else if (bit_test(instat, 7))					//alredy low?
-				{
+			}
+			else 
+			if (bit_test(instat, 7))						//alredy low?
+			{
 				if (++in8cnt == 0)
-					{
+				{
 					zeroevent(E0_IO8);						//input 8 closed
 					bit_clear(instat, 7);					//input is low
-//					iocheck(0x08);
-					}
 				}
-			t2tout = 0;
 			}
+			t2tout = 0;
+		}
 		if (tout)		//every 10secs
-			{
+		{
 			//Check for new minute
 			x = read_rtc_val(RTCMIN);
 			if (x != oldmin)
-				{
+			{
 				oldmin = x;
 				if (update_doortz(1)) store_event();
 				if (update_doortz(2)) store_event();
-				}
+			}
 			if (++onesec > 3) onesec = 0;					//once per second
 			tout = false;
-			}
-//Check for new hour (APB reset)            
+		}
+		//Check for new hour (APB reset)            
 		if (apb)
-			{
+		{
 			curhour = newhour;
 			newhour = read_ext_eeprom(RTC, RTCHOUR);
 			if (newhour != curhour) 
-				{
+			{
 				x = read_ext_eeprom(MEM, APB_RST0);
 				if (x == newhour) reset_apb();
 				else
-					{
+				{
 					x = read_ext_eeprom(MEM, APB_RST1);
 					if (x == newhour) reset_apb();   
 					else
-						{
+					{
 						x = read_ext_eeprom(MEM, APB_RST2);
 						if (x == newhour) reset_apb();   
 						else
-							{
+						{
 							x = read_ext_eeprom(MEM, APB_RST3);
 							if (x == newhour) reset_apb();   
-							}
 						}
 					}
 				}
 			}
-//Check for serial comms
-//Poll sequence 0 - always return ACK
+		}
+		//Check for serial comms
+		//Poll sequence 0 - always return ACK
 		if ((rxstat == RX_POLL) || (rxstat == RX_DATA))
-			{
+		{
 			node = ~input_f();
 			node &= 0x1f;
 			x = rxdat[0] & 0x1f;						//check correct node
 			if (x == node) 
-				{
+			{
 				pollnext = rxdat[0] & 0x60;				//poll sequence
 				if (pollnext == pollseq)
-					{
+				{
 					if (rxstat == RX_POLL) txpoll();
 					else txpoll_data();					
-					}
+				}
 				else
-					{
+				{
 					sendack(node);
 					pollseq = 0x00;
 					evtsent = 0;
-					}
+				}
 				pollseq += 0x20;						//next sequence
 				if (pollseq > 0x60) pollseq = 0x20;
-				}                       
+			}                       
 			rxstat = RX_NO;
-			}
-		else if (rxstat > RX_DATA) rxstat = RX_NO;	//invalid rx status?
-		}           
+		}
+		else 
+		if (rxstat > RX_DATA) rxstat = RX_NO;			//invalid rx status?
+	}           
 }
 //---------------------------------------------------------------------
 //Extracts Mag card info from reader buffer
@@ -2008,15 +2120,16 @@ union join16 site;
 //1st find start char (0x0b)
 	mstat = MAG_NO;						//status = no start char
 	if (rdr == 1) 
-		{
+	{
 		bts = rd1ibits;					//reader 1 in
 		bp = rd1idat;					//point to rdr1 data
-		}
-	else if (rdr == 2)
-		{
+	}
+	else 
+	if (rdr == 2)
+	{
 		bts = rd2ibits;					//reader 2 in
 		bp = rd2idat;					//point to rdr2 data
-		}
+	}
 	bts8 = 8;							//8 bits per byte
 	acc = *bp++;						//1st byte
 	ax = 0;
@@ -2024,66 +2137,65 @@ union join16 site;
 	*bf = 0x00; 
 	digs = 0;							//zero digits counter
 	while (bts > 0)
-		{
+	{
 		if (bit_test(acc, 7)) bit_set(ax, 4);	//set 1 bit
 		acc <<= 1;						//shift byte
 		if(--bts8 == 0)
-			{
+		{
 			acc = *bp++;				//get next byte
 			bts8 = 8;
-			}
+		}
 		if (mstat == MAG_NO)
-			{
+		{
 			if (ax == 0x0b)
-				{
+			{
 				mstat = MAG_ST;			//start char found
 				bts5 = 5;				//5 bits per char
 				ax = 0;					//clear mag char
 				lrc = 0x0b;				//init lrc check
-				}
 			}
+		}
 		else
+		if (--bts5 == 0)
+		{
+			if (!magcard_par(ax)) return RD_PARITY;	//parity error
+			lrc ^= ax;
+			if (mstat == MAG_END) 
 			{
-			if (--bts5 == 0)
-				{
-				if (!magcard_par(ax)) return RD_PARITY;	//parity error
-				lrc ^= ax;
-				if (mstat == MAG_END) 
-					{
-					lrc &= 0x0f;
-					if (lrc != 0x00) return RD_LRC;		//lrc error
-					break;
-					}
-				else if (ax == 0x1f) mstat = MAG_END;	//end char
-				else
-					{
-					*bf++ = (ax & 0x0f) + 0x30;			//store char
-					++digs;								//count char
-					if (digs > MAGDIGS) return RD_UNK;	//too many bits
-					*bf = 0x00;
-					}
-				bts5 = 5;				//5 bits per char
-				ax = 0;					//clear mag char
-				}
+				lrc &= 0x0f;
+				if (lrc != 0x00) return RD_LRC;		//lrc error
+				break;
 			}
+			else 
+			if (ax == 0x1f) mstat = MAG_END;	//end char
+			else
+			{
+				*bf++ = (ax & 0x0f) + 0x30;			//store char
+				++digs;								//count char
+				if (digs > MAGDIGS) return RD_UNK;	//too many bits
+				*bf = 0x00;
+			}
+			bts5 = 5;				//5 bits per char
+			ax = 0;					//clear mag char
+		}
 		ax >>= 1;
 		--bts;                          
-		} 
+	} 
 	if (mstat != MAG_END) return RD_UNK;
-//Check number of digits in card
-//	bts = read_ext_eeprom(MEM, C_LENGTH);
-//	if (digs != bts) return 2;			
-//Extract and check sitecode/Card number
+	//Check number of digits in card
+	//	bts = read_ext_eeprom(MEM, C_LENGTH);
+	//	if (digs != bts) return 2;			
+	//Extract and check sitecode/Card number
 	bts = read_ext_eeprom(MEM, C_SITE_B);		//number of digits
 	if (bts > 0)
-		{
+	{
 		bts5 = read_ext_eeprom(MEM, C_SITE_L);	//location of site
 		strcpyn(sx, &buff[bts5], bts);
 		evt.card.w = atol(sx);					//convert to hex
 		site.b[0] = read_ext_eeprom(MEM, C_SITE_0);	//get stored site
 		site.b[1] = read_ext_eeprom(MEM, C_SITE_1);
 		if (evt.card.w != site.w) return RD_SITE;	//correct site?
-		}
+	}
 //Extract and return card number
 	bts = read_ext_eeprom(MEM, C_CARD_B);		//number of digits
 	bts5 = read_ext_eeprom(MEM, C_CARD_L);		//location of card
@@ -2101,10 +2213,10 @@ char n, par;
 
 	par = 0;					//parity check = 0
 	for (n = 0; n < 5; n++)
-		{
+	{
 		if (bit_test(cx, 0)) ++par;
 		cx >>= 1;
-		}
+	}
 	if (bit_test(par, 0)) return 1; else return 0;
 }
 //---------------------------------------------------------------------
@@ -2117,60 +2229,60 @@ char ax, ebts, obts, par, cb, x, *bp, *bps;
 int16 site;
 int32 crd;
 
-//must have correct number of bits
+	//must have correct number of bits
 	x = read_ext_eeprom(MEM, C_LENGTH);
 	if (rdr == 1)
-		{
+	{
 		if (rd1ibits != x) return RD_FMT;
 		bp = rd1idat;
-		}
+	}
 	else
-		{
+	{
 		if (rd2ibits != x) return RD_FMT;
 		bp = rd2idat;
-		}
+	}
 	bps = bp;									//save
-//Check even parity on 1st part of card
+	//Check even parity on 1st part of card
     ebts = read_ext_eeprom(MEM, W_EVEN);		//even parity bits
     if (ebts > 0)								//if parity check
-    	{
+    {
 	    par = 0;								//parity count
     	cb = 8;									//8 bits per byte
     	ax = *bp++;
 		for (x = 0; x < ebts; ++x)
-			{
+		{
 			if (bit_test(ax, 7)) ++par;			//count 1 bit
 			ax <<= 1;							//shift for next bit
 			if (--cb == 0)
-				{
+			{
 				cb = 8;
 				ax = *bp++;						//next byte
-				}
 			}
-		if (bit_test(par, 0)) return RD_PARITY;	//even parity error
 		}
-//Check odd parity on 2nd part of card		
+		if (bit_test(par, 0)) return RD_PARITY;	//even parity error
+	}
+	//Check odd parity on 2nd part of card		
     obts = read_ext_eeprom(MEM, W_ODD);			//odd parity bits
     if (obts > 0)								//if parity check
-    	{	
+    {	
     	par = 0;								//parity count
 		for (x = 0; x < obts; ++x)
-			{
+		{
 			if (bit_test(ax, 7)) ++par;		//count 1 bit
 			ax <<= 1;							//shift for next bit
 			if (--cb == 0)
-				{
+			{
 				cb = 8;
 				ax = *bp++;						//next byte
-				}
 			}
-		if (!bit_test(par, 0)) return RD_PARITY;//odd parity error
 		}
-//Card format ok, now check sitecode
+		if (!bit_test(par, 0)) return RD_PARITY;//odd parity error
+	}
+	//Card format ok, now check sitecode
 	ebts = read_ext_eeprom(MEM, C_SITE_L);		//location of sitecode
 	obts = read_ext_eeprom(MEM, C_SITE_B);		//bits in sitecode
 	if (obts > 0)								//if check sitecode
-		{
+	{
 		bp = bps;								//point to data start
 		bp += (ebts / 8);						//byte location
 		x = ebts % 8;
@@ -2179,17 +2291,17 @@ int32 crd;
 		ax <<= x;
 		site = 0;
 		while (obts > 0)
-			{
+		{
 			if (bit_test(ax, 7)) shift_left(&site, 2, 1);
 			else shift_left(&site, 2, 0);
 			rotate_left(&ax, 1);
 			if (--cb == 0)
-				{
+			{
 				cb = 8;
 				ax = *bp++;
-				}
-			--obts;
 			}
+			--obts;
+		}
 		evt.card.w = site;
 		par = site >> 8;						//site high byte
 		x = read_ext_eeprom(MEM, C_SITE_1);		//get stored site
@@ -2197,8 +2309,8 @@ int32 crd;
 		par = site;								//site low byte
 		x = read_ext_eeprom(MEM, C_SITE_0);
 		if (x != par) return RD_SITE;			//wrong site
-		}
-//Sitecode ok, now extract card number
+	}
+	//Sitecode ok, now extract card number
 	ebts = read_ext_eeprom(MEM, C_CARD_L);		//location of card #
 	obts = read_ext_eeprom(MEM, C_CARD_B);		//bits in card #
 	bp = bps;									//point to data start
@@ -2209,17 +2321,17 @@ int32 crd;
 	ax <<= x;
 	crd = 0;
 	while (obts > 0)	
-		{
+	{
 		if (bit_test(ax, 7)) shift_left(&crd, 4, 1);
 		else shift_left(&crd, 4, 0);
 		rotate_left(&ax, 1);
 		if (!--cb)
-			{
+		{
 			cb = 8;
 			ax = *bp++;
-			}
-		--obts;
 		}
+		--obts;
+	}
 	evt.card.w = crd;
 	return 0;							//ok
 }
@@ -2239,9 +2351,9 @@ long n;
 	crdst.pin.w = 0x00000000;
 	crdst.data = 0x00;
 
-//Check if the card is an accommodation card first; if not run db searches
-//ACCOMCARDS has room 1 cards in first 10 locations (4 bytes per card)
-//room 2 in second 10 locations
+	//Check if the card is an accommodation card first; if not run db searches
+	//ACCOMCARDS has room 1 cards in first 10 locations (4 bytes per card)
+	//room 2 in second 10 locations
     isaccomm = 0;
 	c1 = evt.card.b[3];
 	c2 = evt.card.b[2];
@@ -2249,31 +2361,31 @@ long n;
 	c4 = evt.card.b[0];
 	crdst.addr = ACCOMCARDS;
 	for (n = 0; n < 20; n++)
-		{
+	{
 		bf[0] = 4;
 		readb_ext_eeprom(crdst.addr, bf);
 		if (bf[1] == c1)
-			{
+		{
 			if (bf[2] == c2)
-				{
+			{
 				if (bf[3] == c3)
-					{
+				{
 					if (bf[4] == c4)	//card found?
-						{
+					{
 						if ((n < 10) & (rdr == 1)) isaccomm = 1;
 						if ((n > 9) & (rdr == 2)) isaccomm = 2;
-						}
 					}
 				}
 			}
+		}
 		restart_wdt();
 		crdst.addr += 4;
-		}
+	}
 
 	if (rdr == 1)
-		{
+	{
 		if (db == DB_PIN)			//card and PIN
-			{
+		{
 			crdst.index = evt.card.w;
 			if (crdst.index > 16000) return E1_CARDNF;	//card out of range
 			crdst.index *= (long)4;
@@ -2281,34 +2393,37 @@ long n;
 			readb_spi_eeprom(crdst.index, bf);	//read card info
 			crdst.data = bf[1];
 			crdst.pin.w = make32(0, bf[2], bf[3], bf[4]);
-			}
-		else if (db == DB_RAN)	//random
-			{	
+		}
+		else 
+		if (db == DB_RAN)	//random
+		{	
 			if (!findcard(5)) return E1_CARDNF;	//card not found
-			}
-		else if (db == DB_PRAN)	//random + pin
-			{
+		}
+		else 
+		if (db == DB_PRAN)	//random + pin
+		{
 			if (!findcard(8)) return E1_CARDNF;	//card not found
-			}
+		}
 		else		//sequential card only
-			{
+		{
 			crdst.index = evt.card.w;
 			crdst.data = read_spi_eeprom(evt.card.w);	//read card info
-			}
+		}
 		acc = (crdst.data >> 4) & 0x0f;
 		if (acc == 0x00) return E1_AL;
 		if (isaccomm == 1) return E1_ACC;
 		if (!check_access(0, acc)) return E1_TZ;
 		if (crdst.pin.w != 0x00000000) 
-			{
+		{
 			if (check_access(2, 0))	return E1_PIN;
-			}
-		return E1_ACC;								//card ok
 		}
-	else if (rdr == 2)
-		{       
+		return E1_ACC;								//card ok
+	}
+	else 
+	if (rdr == 2)
+	{       
 		if (db == DB_PIN)			//card and PIN
-			{
+		{
 			crdst.index = evt.card.w;
 			if (crdst.index > 20000) return E2_CARDNF;	//card out of range
 			crdst.index *= (long)4;
@@ -2316,31 +2431,33 @@ long n;
 			readb_spi_eeprom(crdst.index, bf);	//read card info
 			crdst.data = bf[1];
 			crdst.pin.w = make32(0, bf[2], bf[3], bf[4]);
-			}
-		else if (db == DB_RAN)	//random
-			{	
+		}
+		else 
+		if (db == DB_RAN)	//random
+		{	
 			if (!findcard(5)) return E2_CARDNF;	//card not found
-			}
-		else if (db == DB_PRAN)	//random + pin
-			{
+		}
+		else 
+		if (db == DB_PRAN)	//random + pin
+		{
 			if (!findcard(8)) return E2_CARDNF;	//card not found
-			}
+		}
 		else		//sequential card only
-			{
+		{
 			crdst.index = evt.card.w;
 			crdst.data = read_spi_eeprom(crdst.index);	//read card info
-			}
+		}
 		evt.evt = E2_TZ;								//timezone            
 		acc = (crdst.data >> 4) & 0x0f;
 		if (acc == 0x00) return E2_AL;
 		if (isaccomm == 2) return E2_ACC;
 		if (!check_access(1, acc)) return E2_TZ;
 		if (crdst.pin.w != 0x00000000) 
-			{
+		{
 			if (check_access(3, 0)) return E2_PIN;
-			}
-		return E2_ACC;
 		}
+		return E2_ACC;
+	}
 }
 //---------------------------------------------------------------------
 //reset_apb()
@@ -2381,23 +2498,23 @@ char bf[16];
 	writeb_ext_eeprom(putad.w, bf);
 	putad.w += EVTSIZE;
 	if (putad.w > EVTTOP)								//if top then
-		{											//back to bottom
+	{											//back to bottom
 		putad.w = EVTBASE;	
-		}
+	}
 	bf[0] = 2;
 	bf[1] = putad.b[0];
 	bf[2] = putad.b[1];
 	writeb_ext_eeprom(evtputl, bf);
 	if (getad.w == putad.w)								//if = then full 
-		{										
+	{										
 		getad.w += EVTSIZE;							//adjust get address
 		if (getad.w > EVTTOP)							//if top then
-			{										//back to bottom
+		{										//back to bottom
 			getad.w = EVTBASE;
-			}
+		}
 		write_ext_eeprom(MEM, evtgetl, getad.b[0]);		//save get address	
 		write_ext_eeprom(MEM, evtgeth, getad.b[1]);	
-		}
+	}
 }
 //---------------------------------------------------------------------
 //read_rtc()
@@ -2449,19 +2566,19 @@ char x, z;
 	if (evt.hour < x) return false;			//out of tz
 	++addr;
 	if (evt.hour == x)
-		{
+	{
 		x = read_ext_eeprom(MEM, addr);		//minute from
 		if (evt.min < x) return false;		//out of tz
-		}                                   
+	}                                   
 	++addr;
 	x = read_ext_eeprom(MEM, addr);			//hour to
 	if (evt.hour > x) return false;			//out of tz
 	++addr;
 	if (evt.hour == x)
-		{
+	{
 		x = read_ext_eeprom(MEM, addr);		//minute to
 		if (evt.min > x) return false;		//out of tz
-		}                               
+	}                               
 	++addr;
 	x = read_ext_eeprom(MEM, addr);			//days of week
 	z = evt.day - 1;
@@ -2518,20 +2635,20 @@ char x, cs, bf[16], *p;
 	getad.b[0] = bf[3];				//get address
 	getad.b[1] = bf[4];
 	if (evtsent)							//event to be acknowledged
-		{
+	{
         getad.w += EVTSIZE;				//next get address
 		if (getad.w > EVTTOP)				//if top then
-			{							//back to bottom
+		{							//back to bottom
 			getad.w = EVTBASE;
-			}
+		}
 		bf[0] = 2;
 		bf[1] = getad.b[0];				//update get address
 		bf[2] = getad.b[1];
 		writeb_ext_eeprom(evtgetl, bf);
 		evtsent = false;				//event has been acknowledged	
-		}
+	}
 	if (getad.w != putad.w)
-		{
+	{
 		delay_ms(1);
 		output_high(txon);					//RS485 = TX
 		delay_ms(TXDEL);
@@ -2544,12 +2661,10 @@ char x, cs, bf[16], *p;
 		*p++ = EVTSIZE;
 		readb_ext_eeprom(getad.w, bf);
 		for (x = 0; x < 4; x++)
-			{
+		{
 			putchar(*p);
 			cs += *p++;
-			}
-//		putchar(0x00);
-//		putchar(0x00);
+		}
 		putchar(*p);			//card high byte
 		cs += *p++;		
 		putchar(*p);			//card low byte
@@ -2566,7 +2681,7 @@ char x, cs, bf[16], *p;
 		while (!TRMT) restart_wdt();
 		output_low(txon);				//RS485 = RX
 		evtsent = 1;						//event has been sent
-		}
+	}
 	else sendack(rxdat[0]);
 	return 1;
 }
@@ -2584,12 +2699,10 @@ short ok;
 	cnt = rxcnt - 1;
 	cs = 0;
 	for (x = 0; x < cnt; x++) cs += rxdat[x];
-	if (cs != rxdat[cnt])
-{ 
-return 0; }
+	if (cs != rxdat[cnt]) return 0;
 	x = rxdat[2];
 	switch (x)
-		{
+	{
 		case 0x61:	//program card
 					if (writecard()) sendack(rpl);
 					break;
@@ -2615,6 +2728,8 @@ return 0; }
 					drmon2 = rxdat[7];
 					update_doortz(1);					
 					update_doortz(2);
+					dr1stat = DOOR_NO;	//Added statuses because setting door mon on without contacts
+					dr2stat = DOOR_NO;	//causes alarms which do not clear when door mon then removed
 					sendack(rpl); 
 					break;
 		case 0x65:	//timezones  
@@ -2630,12 +2745,12 @@ return 0; }
 /*					card = PIN1_L;
 					x = rxdat[3];
 					if (x < 10)
-						{
+					{
 						card += x * 2;			//point to location
 						write_ext_eeprom(MEM, card++, rxdat[5]);
 						write_ext_eeprom(MEM, card, rxdat[4]);
 						sendack(rpl);
-						}*/
+					}*/
 					sendack(rpl);
 					break;
 		case 0x68:	//Clear Events
@@ -2648,10 +2763,10 @@ return 0; }
 					rxdat[2] = 5;
 					writeb_ext_eeprom(APBMODE, &rxdat[2]);
 					if (rxdat[1] > 7) 
-						{
+					{
 						write_ext_eeprom(MEM, ATBTM1, rxdat[8]);
 						write_ext_eeprom(MEM, ATBTM2, rxdat[9]);
-						}
+					}
 					sendack(rpl);
 					break;							
 		case 0x6A:	//Reset APB
@@ -2669,58 +2784,55 @@ return 0; }
 					break;
 		case 0x6d:	//Set door mode (open/active)
 					if (rxdat[3] == 1)
-						{
+					{
 						if (rxdat[4] == 1)			//close door
-							{
+						{
 							if (dr1stat == DOOR_SOP)
-								{
+							{
 								output_low(relay1);	//relay1 off
 								output_low(gled1);	//green led1 off
 								if (crcflags & 0x02) output_low(gled2);
 								dr1stat = DOOR_NO;	//set normal
 								if (update_doortz(1)) store_event();
-								}
-							else if (dr1stat == DOOR_NO)
-								{
-								output_low(auxo1);  //turn off alarm
-								}
 							}
+							else 
+							if (dr1stat == DOOR_NO) output_low(auxo1);		  //turn off alarm
+						}
 
 						else						//open door
-							{
+						{
 							dr1stat = DOOR_SOP;		//set open
 							r1count++;
 							write_ext_eeprom(MEM, R1ACT, r1count);			//increment relay count
 							output_high(relay1);	//relay1 on
 							output_high(gled1);		//green led1 on
 							if (crcflags & 0x02) output_high(gled2);
-							}
 						}
-					else if (rxdat[3] == 2)
-						{
+					}
+					else 
+					if (rxdat[3] == 2)
+					{
 						if (rxdat[4] == 1)			//close door
-							{
+						{
 							if (dr2stat == DOOR_SOP)
-								{
+							{
 								output_low(relay2);	//relay2 off
 								output_low(gled2);	//green led2 off
 								dr2stat = DOOR_NO;	//set normal
 								if (update_doortz(2)) store_event();
-								}
-							else if (dr2stat == DOOR_NO)
-								{
-								output_low(auxo2);  //turn off alarm
-								}
 							}
+							else 
+							if (dr2stat == DOOR_NO) output_low(auxo2);  	//turn off alarm
+						}
 						else						//open door
-							{
+						{
 							dr2stat = DOOR_SOP;		//set open
 							r2count++;
 							write_ext_eeprom(MEM, R2ACT, r2count);			//increment relay count
 							output_high(relay2);	//relay2 on
 							output_high(gled2);		//green led2 on
-							}
 						}
+					}
 					sendack(rpl);
 					break;          
 		case 0x6e:	//set extended timezones
@@ -2735,25 +2847,25 @@ return 0; }
 					break; 
 		case 0x71:	//local alarm control
 					if (rxdat[3] == 1) 
-						{
+					{
 						if (rxdat[4] != 0) output_high(auxo1);
 						else output_low(auxo1);
-						}
+					}
 					else if (rxdat[3] == 2) 
-						{
+					{
 						if (rxdat[4] != 0) output_high(auxo2);
 						else output_low(auxo2);
-						}
+					}
 					else if (rxdat[3] == 3) 
-						{
+					{
 						if (rxdat[4] != 0) output_high(auxo3);
 						else output_low(auxo3);
-						}
+					}
 					else if (rxdat[3] == 4) 
-						{
+					{
 						if (rxdat[4] != 0) output_high(auxo4);
 						else output_low(auxo4);
-						}
+					}
 					sendack(rpl);
 					break;
 		case 0x72:	//set door timezones
@@ -2784,6 +2896,11 @@ return 0; }
 					writeb_ext_eeprom(ACCOMCARDS, &rxdat[2]);
 					sendack(rpl);
 					break;
+		case 0x77:	//Store up to 10 pins
+					rxdat[2] = 33;
+					writeb_ext_eeprom(PIN1_L, &rxdat[2]);
+					sendack(rpl);
+					break;
 		case 0xf1:	//Set new keypad password
 					write_ext_eeprom(MEM, PASSH, rxdat[3]);
 					write_ext_eeprom(MEM, PASSL, rxdat[4]);
@@ -2803,7 +2920,7 @@ return 0; }
 		case 0xf5:	//load new firmware
 					loadfw();
 					break;
-		}                               
+	}                               
 	return 1;
 }
 //--------------------------------------------------------------------------- 
@@ -2816,63 +2933,64 @@ void relay_on(char rly, char tm)
 char x;
 
 	if (rly == 1)
-		{
+	{
 		if (dr1stat == DOOR_NO)
-			{
+		{
 			r1count++;
 			write_ext_eeprom(MEM, R1ACT, r1count);			//increment relay count
-			}	
+		}	
 		output_high(relay1);							//relay 1 on
 		output_high(gled1);								//green led on
 		if (crcflags & 0x02) output_high(gled2);		//if single door
 		if (tm > 0) r1tick = tm;
 		else 
-			{
+		{
 			x = read_ext_eeprom(MEM, REL1_TM);			//relay time
 			if (x == 0x00)								//0.5sec
-				{
+			{
 				tmr2tick = 208;
 				r1tick = 1;
-				}
-			else r1tick = x * 2;
 			}
+			else r1tick = x * 2;
+		}
 		r1tout = false;
 		if (drmon1 != 0)								//if door monitoring
-			{
+		{
 			dr1tick = x * 2 + 2;
 			dr1tout = false;
 			if (dr1stat == DOOR_NO) dr1stat = DOOR_REL;
-			}
 		}
-	else if (rly == 2)
-		{
+	}
+	else 
+	if (rly == 2)
+	{
 		if (dr2stat == DOOR_NO)
-			{
+		{
 			r2count++;
 			write_ext_eeprom(MEM, R2ACT, r2count);			//increment relay count
-			}
+		}
 		output_high(relay2);							//relay 2 on
 		output_high(gled2);								//green led on
 		if (crcflags & 0x02) output_high(gled1);		//if single door
 		if (tm > 0) r2tick = tm;
 		else 
-			{
+		{
 			x = read_ext_eeprom(MEM, REL2_TM);			//relay time
 			if (x == 0x00)								//0.5sec
-				{
+			{
 				tmr2tick = 208;
 				r2tick = 1;
-				}
-			else r2tick = x * 2;
 			}
+			else r2tick = x * 2;
+		}
 		r2tout = false;
 		if (drmon2 != 0)								//if door monitoring
-			{
+		{
 			dr2tick = x * 2 + 2;
 			dr2tout = false;
 			if (dr2stat == DOOR_NO) dr2stat = DOOR_REL;
-			}
 		}
+	}
 }
 //---------------------------------------------------------------------------
 //powerup_check()
@@ -2904,53 +3022,54 @@ unsigned long tz;
 	read_rtc();
 	op = 0;
 	if (rdr == 1)
-		{
+	{
 		x = read_ext_eeprom(MEM, DOOR1_TZ);	//door 1 timezone
 		if (x == 0) goto updz1;
-		else if (x == 1)
-			{
+		else 
+		if (x == 1)
+		{
 			op = 1;
 			goto updz1;
-			}
+		}
 		bf[0] = 2;
 		readb_ext_eeprom(DACC0, bf);
 		if ((bf[1] == 0x00) && (bf[2] == 0x00)) 
-			{
+		{
 			if (dr1stat == DOOR_TZOP) goto updz1;
 			else return 0;
-			}
+		}
 		x = bf[2];
 		tz = DTZ1;								//point to tz1
 		for (n = 0; n < 8; n++)					//1st 8 door timezones
-			{
+		{
 			if (bit_test(x, n))
-				{
+			{
 				if (tz_check(tz)) 
-					{
+				{
 					op = 1;		//timezone valid
 					goto updz1;
-					}
 				}
-			tz += (unsigned long)DTZSIZE;		//point to next tz
 			}
+			tz += (unsigned long)DTZSIZE;		//point to next tz
+		}
 		x = bf[1];
 		for (n = 0; n < 8; n++)					//next 8 timezones
-			{
+		{
 			if (bit_test(x, n))
-				{
+			{
 				if (tz_check(tz)) 
-					{
+				{
 					op = 1;	//timezone valid
 					goto updz1;
-					}
 				}
-			tz += (unsigned long)DTZSIZE;		//point to next tz
 			}
+			tz += (unsigned long)DTZSIZE;		//point to next tz
+		}
 updz1:
 		if (op == 1)
-			{
+		{
 			if ((dr1stat != DOOR_TZOP))		//if not already open on TZ
-				{							
+			{							
 				r1count++;
 				write_ext_eeprom(MEM, R1ACT, r1count);			//increment relay count
 				output_high(relay1);		//relay 1 on
@@ -2960,70 +3079,69 @@ updz1:
 				evt.evt = E1_OPTZ;			//dr1 opened
 				chg = true;
 				dr1stat = DOOR_TZOP;
-				}
-			}
-		else
-			{
-			if (dr1stat == DOOR_TZOP)		//if currently open on TZ
-				{
-				evt.card.w = 0;
-				evt.evt = E1_CLTZ;			//dr1 closed
-				chg = true;
-				output_low(relay1);			//relay 1 off
-				output_low(gled1);			//green led 1 off
-				if (crcflags & 0x02) output_low(gled2);
-				dr1stat = DOOR_NO;
-				}
 			}
 		}
-	else
+		else
+		if (dr1stat == DOOR_TZOP)			//if currently open on TZ
 		{
+			evt.card.w = 0;
+			evt.evt = E1_CLTZ;				//dr1 closed
+			chg = true;
+			output_low(relay1);				//relay 1 off
+			output_low(gled1);				//green led 1 off
+			if (crcflags & 0x02) output_low(gled2);
+			dr1stat = DOOR_NO;
+		}
+	}
+	else
+	{
 		x = read_ext_eeprom(MEM, DOOR2_TZ);	//door 2 timezone
 		if (x == 0) goto updz2;
-		else if (x == 1)
-			{
+		else 
+		if (x == 1)
+		{
 			op = 1;
 			goto updz2;
-			}
+		}
 		bf[0] = 2;
 		readb_ext_eeprom(DACC1, bf);
 		if ((bf[1] == 0x00) && (bf[2] == 0x00)) 
-			{
+		{
 			if (dr2stat == DOOR_TZOP) goto updz2;
 			else return 0;
-			}
+		}
 		x = bf[2];
 		tz = DTZ1;							//point to tz1
 		for (n = 0; n < 8; n++)				//1st 8 door timezones
-			{
+		{
 			if (bit_test(x, n))
-				{
+			{
 				if (tz_check(tz)) 
-					{
+				{
 					op = 1;					//timezone valid
 					goto updz2;
-					}
 				}
-			tz += (unsigned long)DTZSIZE;	//point to next tz
 			}
+			tz += (unsigned long)DTZSIZE;	//point to next tz
+		}
 		x = bf[1];
 		for (n = 0; n < 8; n++)				//next 8 timezones
-			{
+		{
 			if (bit_test(x, n))
-				{
+			{
 				if (tz_check(tz)) 
-					{
+				{
 					op = 1;	//timezone valid
 					goto updz2;
-					}
 				}
-			tz += (unsigned long)DTZSIZE;	//point to next tz
 			}
+			tz += (unsigned long)DTZSIZE;	//point to next tz
+		}
 updz2:
 		if (op == 1)
-			{
+		{
 			if ((dr2stat != DOOR_TZOP))		//if not already open on TZ
-				{							
+			{							
 				r2count++;
 				write_ext_eeprom(MEM, R2ACT, r2count);			//increment relay count
 				output_high(relay2);		//relay 2 on
@@ -3032,21 +3150,19 @@ updz2:
 				evt.evt = E2_OPTZ;			//dr2 opened
 				chg = true;
 				dr2stat = DOOR_TZOP;
-				}
-			}
-		else
-			{
-			if (dr2stat == DOOR_TZOP)		//if currently open on TZ
-				{
-				evt.card.w = 0;
-				evt.evt = E2_CLTZ;			//dr2 closed
-				chg = true;
-				output_low(relay2);			//relay 2 off
-				output_low(gled2);			//green led 2 off
-				dr2stat = DOOR_NO;
-				}
 			}
 		}
+		else
+		if (dr2stat == DOOR_TZOP)			//if currently open on TZ
+		{
+			evt.card.w = 0;
+			evt.evt = E2_CLTZ;				//dr2 closed
+			chg = true;
+			output_low(relay2);				//relay 2 off
+			output_low(gled2);				//green led 2 off
+			dr2stat = DOOR_NO;
+		}
+	}
 	return chg;
 }
 //---------------------------------------------------------------------------
@@ -3099,10 +3215,10 @@ char x;
 
 	cs = 0;
 	for (addr = 1; addr <= CRDTOP; addr++)
-		{
+	{
 		x = read_ext_eeprom(MEM, addr);
 		cs += x & 0xFC;					//ignore apb bits
-		}
+	}
 	write_ext_eeprom(MEM, CRDSUML, cs);
 	write_ext_eeprom(MEM, CRDSUMH, cs >> 8);
 	return cs;
@@ -3117,10 +3233,10 @@ char x;
 
 	cs = 0;
 	for (addr = CBASE + 1; addr <= CBASE + 90; addr++)
-		{
+	{
 		x = read_ext_eeprom(MEM, addr);
 		cs += x & 0xFC;					//ignore apb bits
-		}
+	}
 	write_ext_eeprom(MEM, CFGSUML, cs);
 	write_ext_eeprom(MEM, CFGSUMH, cs >> 8);
 	return cs;
@@ -3134,12 +3250,12 @@ char x, bf[32], *p;
 
 	x = read_ext_eeprom(MEM, DMODE1);
 	if (x == 0xff)
-		{
+	{
 		p = bf;
 		*p++ = sizeof(DEFAULT_SET);
 		for (x = 0; x < sizeof(DEFAULT_SET); x++) *p++ = DEFAULT_SET[x];
 		writeb_ext_eeprom(CBASE, bf);
-		}
+	}
 	write_ext_eeprom(RTC, RTCCON, 0x00);
 	write_ext_eeprom(RTC, RTCCAL, 0x00);
 	write_ext_eeprom(RTC, RTCCOMP, 0x00);
@@ -3178,67 +3294,67 @@ long mins, minrtc, crd;
 
 	if (crdst.data & 0x02) return true;		//passback
 	if (rdr == 1)
-		{
+	{
 		atbptr = atbst1;		//point to atb store
 		atbnext = atbput1;		//next atb location
 		t = read_ext_eeprom(MEM, ATBTM1);	//atb time
 		if (t > 30) 
-			{
+		{
 			write_ext_eeprom(MEM, ATBTM1, 0);
 			t = 0;
-			}
 		}
+	}
 	else
-		{
+	{
 		atbptr = atbst2;		//point to atb store
 		atbnext = atbput2;		//next atb location
 		t = read_ext_eeprom(MEM, ATBTM2);	//atb time
 		if (t > 30) 
-			{
+		{
 			write_ext_eeprom(MEM, ATBTM2, 0);
 			t = 0;
-			}
 		}
+	}
 	if (t == 0) return true;	//no atb
 	minrtc = bcd2hex(evt.hour);
 	minrtc *= 60;
 	x = bcd2hex(evt.min);
 	minrtc += x;
 	for (n = 0; n < ATBSIZE; n++)
-		{
+	{
 		crd = evt.card.w;
 		if (crd == atbptr->card)
-			{
+		{
 			if (evt.date == atbptr->date)
-				{
+			{
 				mins = minrtc - atbptr->min;
 				if (t >= mins) return false;
-				}
+			}
 			atbptr->date = evt.date;
 			atbptr->min = minrtc;
 			return true;
-			}
-		++atbptr;
 		}
+		++atbptr;
+	}
 //card not found in atb store
 	if (rdr == 1)
-		{
+	{
 		if (atbput1 >= ATBSIZE) atbput1 = 0;
 		atbptr = &atbst1[atbput1];
 		atbptr->card = evt.card.w;
 		atbptr->date = evt.date;
 		atbptr->min = minrtc;
 		if (++atbput1 >= ATBSIZE) atbput1 = 0;	
-		}
+	}
 	else
-		{
+	{
 		if (atbput2 >= ATBSIZE) atbput2 = 0;
 		atbptr = &atbst2[atbput2];
 		atbptr->card = evt.card.w;
 		atbptr->date = evt.date;
 		atbptr->min = minrtc;
 		if (++atbput2 >= ATBSIZE) atbput2 = 0;	
-		}
+	}
 	return true;
 }
 //---------------------------------------------------------------------------
@@ -3270,21 +3386,21 @@ char x, z, n;
 	if (bit_test(x, 0)) return true;		//tz always = bit 0
 	tz = TZ2;								//point to tz2
 	for (n = 1; n < 8; n++)					//1st 7 user timezones
-		{
+	{
 		if (bit_test(x, n))
-			{
-			if (tz_check(tz)) return true;	//timezone valid
-			}
-		tz += TZSIZE;						//point to next tz
-		}
-	for (n = 0; n < 8; n++)					//next 8 timezones
 		{
-		if (bit_test(z, n))
-			{
 			if (tz_check(tz)) return true;	//timezone valid
-			}
-		tz += TZSIZE;						//point to next tz
 		}
+		tz += TZSIZE;						//point to next tz
+	}
+	for (n = 0; n < 8; n++)					//next 8 timezones
+	{
+		if (bit_test(z, n))
+		{
+			if (tz_check(tz)) return true;	//timezone valid
+		}
+		tz += TZSIZE;						//point to next tz
+	}
 	return false;
 }
 //---------------------------------------------------------------------
@@ -3302,27 +3418,27 @@ char x;
 //check card format
 	cardfmt = read_ext_eeprom(MEM, CRD_FMT);
 	if (cardfmt > FMT_WIEG)
-		{
+	{
 		cardfmt = FMT_MAG;
 		write_ext_eeprom(MEM, CRD_FMT, FMT_MAG);
-		}
+	}
 	x = read_ext_eeprom(MEM, PIN_LEN);
 	if ((x != 4) && (x != 6))
-		{
+	{
 		write_ext_eeprom(MEM, PIN_LEN, 4);
-		}
+	}
 	mode1 = read_ext_eeprom(MEM, DMODE1);	//door 1 mode
 	if (mode1 > 5)
-		{
+	{
 		mode1 = MD_CARD;
 		write_ext_eeprom(MEM, DMODE1, MD_CARD);
-		}
+	}
 	mode2 = read_ext_eeprom(MEM, DMODE2);	//door 2 mode
 	if (mode2 > 5)
-		{
+	{
 		mode2 = MD_CARD;
 		write_ext_eeprom(MEM, DMODE2, MD_CARD);
-		}
+	}
 	apb = read_ext_eeprom(MEM, APBMODE);		//apb mode?
     powerup_check();
 	drmon1 = read_ext_eeprom(MEM, DOOR1_TM);	//door1 open time
@@ -3371,24 +3487,24 @@ void setup_readers(void)
 
 	cardfmt = read_ext_eeprom(MEM, CRD_FMT);
 	if (cardfmt > FMT_WIEG)
-		{
+	{
 		cardfmt = FMT_MAG;
 		write_ext_eeprom(MEM, CRD_FMT, FMT_MAG);
-		}  
+	}  
 	if (cardfmt == FMT_MAG)		//mag card
-		{
+	{
 		disable_interrupts(INT_EXT);	//rdr2 data
 		enable_interrupts(INT_EXT1);	//rdr2 clk
 		disable_interrupts(INT_EXT2);	//rdr1 data
 		enable_interrupts(INT_EXT3);	//rdr2 clk
-		}
+	}
 	else						//wiegand format
-		{
+	{
 		enable_interrupts(INT_EXT);		//rdr2 D1
 		enable_interrupts(INT_EXT1);	//rdr1 D0
 		enable_interrupts(INT_EXT2);	//rdr2 D1
 		enable_interrupts(INT_EXT3);	//rdr2 D0
-		}
+	}
     enable_interrupts(GLOBAL);
 }
 //---------------------------------------------------------------------------
@@ -3399,10 +3515,10 @@ void strcpyn(char *s1, char *s2, char n)
 char x;
 
 	for (x = 0; x < n; x++)
-		{
+	{
 		if (*s2 == 0x00) break;
 		*s1++ = *s2++;
-		}
+	}
 	*s1 = 0x00;
 }
 //---------------------------------------------------------------------------
@@ -3421,32 +3537,32 @@ char bf[10];
 	c4 = evt.card.b[0];
 	crdst.addr = 0;
 	for (n = 0; n < 8000; n++)
-		{
+	{
 		bf[0] = sz;
 		readb_spi_eeprom(crdst.addr, bf);
 		if (bf[1] == c1)
-			{
+		{
 			if (bf[2] == c2)
-				{
+			{
 				if (bf[3] == c3)
-					{
+				{
 					if (bf[4] == c4)	//card found?
-						{
+					{
 						crdst.data = bf[5];
 						crdst.index = n;
 						if (sz == 8)
-							{
+						{
 							crdst.pin.w = make32(0, bf[6], bf[7], bf[8]);
-							}
+						}
 						else crdst.pin.w = 0x00000000;
 						return 1;
-						}
 					}
 				}
 			}
+		}
 		restart_wdt();
 		crdst.addr += sz;
-		}
+	}
 	return 0;
 }
 //---------------------------------------------------------------------------
@@ -3461,17 +3577,17 @@ char c;
 long n;
 
 	for (n = 0; n < MAXCARDR; n++)
-		{
+	{
 		c = read_ext_eeprom(MEM, n);
 		if (c == 0) 
-			{
+		{
 			crdst.addr = n * CRDSIZER;
 			crdst.index = n;
 			return 1;				//found
-			}
-		restart_wdt();
 		}
-	return 0;				//not found
+		restart_wdt();
+	}
+	return 0;						//not found
 }
 //---------------------------------------------------------------------
 //Write card to memory
@@ -3483,57 +3599,59 @@ char db;
 long addr;
 
 	db = read_ext_eeprom(MEM, CARD_DB);		//card database
-	if (db == DB_PIN)			//20000 seq cards + PIN
-		{
+	if (db == DB_PIN)						//20000 seq cards + PIN
+	{
 		addr = make16(rxdat[5], rxdat[6]);
 		if (addr > 16000) return false;
 		addr *= (long)4;
-		rxdat[8] = 4;				//4 bytes per card
+		rxdat[8] = 4;						//4 bytes per card
 		rxdat[9] = rxdat[7];
 		writeb_spi_eeprom(addr, &rxdat[8]);
 		return true;
-		}
-	else if (db == DB_RAN)					//if random
-		{
+	}
+	else 
+	if (db == DB_RAN)						//if random
+	{
 		addr = make16(rxdat[8], rxdat[9]);	//card index
 		if (addr > 8000) return false;
-		addr *= (long)5;			//5 bytes per card
+		addr *= (long)5;					//5 bytes per card
 		rxdat[2] = 5;
-		if (rxdat[7] == 0x00)		//if delete card
-			{						//write card as zero
+		if (rxdat[7] == 0x00)				//if delete card
+		{									//write card as zero
 			rxdat[3] = 0x00;
 			rxdat[4] = 0x00;
 			rxdat[5] = 0x00;
 			rxdat[6] = 0x00;
-			}
+		}
 		writeb_spi_eeprom(addr, &rxdat[2]);
 		return true;
-		}
-	else if (db == DB_PRAN)			//pin + random
-		{
+	}
+	else 
+	if (db == DB_PRAN)						//pin + random
+	{
 		addr = make16(rxdat[8], rxdat[9]);
 		if (addr > 8000) return false;
-		addr *= (long)8;			//8 bytes per card
+		addr *= (long)8;					//8 bytes per card
 		rxdat[2] = 8;
 		rxdat[8] = rxdat[10];
 		rxdat[9] = rxdat[11];
 		rxdat[10] = rxdat[12];
-		if (rxdat[7] == 0x00)		//if delete card
-			{						//write card as zero
+		if (rxdat[7] == 0x00)				//if delete card
+		{									//write card as zero
 			rxdat[3] = 0x00;
 			rxdat[4] = 0x00;
 			rxdat[5] = 0x00;
 			rxdat[6] = 0x00;
-			}
+		}
 		writeb_spi_eeprom(addr, &rxdat[2]);
 		return true;
-		}
-	else		//65536 sequential cards, no PIN
-		{
+	}
+	else									//65536 sequential cards, no PIN
+	{
 		addr = make16(rxdat[5], rxdat[6]);
 		write_spi_eeprom(addr, rxdat[7]);
 		return true;
-		}
+	}
 }
 //---------------------------------------------------------------------------
 //writeblock()
@@ -3547,14 +3665,14 @@ short writeblock(char *s)
 /*	idx.b[1] = *s++;		//index high byte
 	idx.b[0] = *s++;		//idex low byte
 	if (input(_RAND))			//if not random
-		{
+	{
 		writeb_ext_eeprom(idx.w, s);
-		}
+	}
 	else
-		{
+	{
 		n = *s++;			//number of cards
 		while (n > 0)
-			{
+		{
 			j = n % 32;
 			if (j == 0) j = 32;
 			sp = sf;
@@ -3562,18 +3680,18 @@ short writeblock(char *s)
 			fp = ff;
 			*fp++ = j;
 			for (x = 0; x < j; x++)
-				{
+			{
 				*sp++ = *s++;
 				*sp++ = *s++;
 				*sp++ = *s++;
 				*sp++ = *s++;
 				*fp++ = *s++;
-				}
+			}
 			writeb_spi_eeprom(idx.w * 4, sf);		
 			writeb_ext_eeprom(idx.w, ff);
 			n -= j;
-			}
-		}*/
+		}
+	}*/
 	return 1;	
 }
 //---------------------------------------------------------------------------
@@ -3583,31 +3701,32 @@ short writeblock(char *s)
 void armcheck(short i)
 {
 	if (bf[2] == 1)			//rdr1
-		{
+	{
 		if (i)
-			{
+		{
 			if (bf[3] == 0) arm1 = 0;
 			else arm1 = 1;
-			}
+		}
 		else
-			{
+		{
 			if (bf[3] != 0) arm1 = 0;
 			else arm1 = 1;
-			}
 		}
-	else if (bf[2] == 2)	//rdr2
-		{
+	}
+	else 
+	if (bf[2] == 2)			//rdr2
+	{
 		if (i)
-			{
+		{
 			if (bf[3] == 0) arm2 = 0;
 			else arm2 = 1;
-			}
+		}
 		else
-			{
+		{
 			if (bf[3] != 0) arm2 = 0;
 			else arm2 = 1;
-			}
 		}
+	}
 }
 //---------------------------------------------------------------------------
 //check data in bf[] for tamper on/off
@@ -3639,94 +3758,100 @@ short st;
 	else if (i == 8) readb_ext_eeprom(INP8, bf);
 	else return;
 	if (bf[1] == INP_TAMP)		//tamper input 
-		{
+	{
 		if (bf[2] == 0)	output_low(auxo1);
 		else output_high(auxo1);
-		}
-	else if (bf[1] == INP_ARM)	//arming input 
-		{
+	}
+	else 
+	if (bf[1] == INP_ARM)	//arming input 
+	{
 		if (bf[2] == 1)			//rdr1
-			{
+		{
 			if (st)
-				{
+			{
 				if (bf[3] == 0) arm1 = 0;
 				else arm1 = 1;
-				}
+			}
 			else
-				{
+			{
 				if (bf[3] != 0) arm1 = 0;
 				else arm1 = 1;
-				}
 			}
-		else if (bf[2] == 2)	//rdr2
-			{
+		}
+		else 
+		if (bf[2] == 2)			//rdr2
+		{
 			if (st)
-				{
+			{
 				if (bf[3] == 0) arm2 = 0;
 				else arm2 = 1;
-				}
+			}
 			else
-				{
+			{
 				if (bf[3] != 0) arm2 = 0;
 				else arm2 = 1;
-				}
 			}
 		}
-	else if (bf[1] == INP_SW)
-		{
+	}
+	else 
+	if (bf[1] == INP_SW)
+	{
 		if (bit_test(bf[2], 0))			//aux out 1
-			{
+		{
 			if (st)
-				{
+			{
 				if (bf[3] == 0) output_low(auxo1);
 				else output_high(auxo1);
-				}
+			}
 			else
-				{
+			{
 				if (bf[3] != 0) output_low(auxo1);
 				else output_high(auxo1);
-				}
-			}
-		else if (bit_test(bf[2], 1))	//aux out 2
-			{
-			if (st)
-				{
-				if (bf[3] == 0) output_low(auxo2);
-				else output_high(auxo2);
-				}
-			else
-				{
-				if (bf[3] != 0) output_low(auxo2);
-				else output_high(auxo2);
-				}
-			}
-		else if (bit_test(bf[2], 2))	//aux out 3
-			{
-			if (st)
-				{
-				if (bf[3] == 0) output_low(auxo3);
-				else output_high(auxo3);
-				}
-			else
-				{
-				if (bf[3] != 0) output_low(auxo3);
-				else output_high(auxo3);
-				}
-			}
-		else if (bit_test(bf[2], 3))	//aux out 4
-			{
-			if (st)
-				{
-				if (bf[3] == 0) output_low(auxo4);
-				else output_high(auxo2);
-				}
-			else
-				{
-				if (bf[3] != 0) output_low(auxo4);
-				else output_high(auxo2);
-				}
 			}
 		}
+		else 
+		if (bit_test(bf[2], 1))			//aux out 2
+		{
+			if (st)
+			{
+				if (bf[3] == 0) output_low(auxo2);
+				else output_high(auxo2);
+			}
+			else
+			{
+				if (bf[3] != 0) output_low(auxo2);
+				else output_high(auxo2);
+			}
+		}
+		else 
+		if (bit_test(bf[2], 2))			//aux out 3
+		{
+			if (st)
+			{
+				if (bf[3] == 0) output_low(auxo3);
+				else output_high(auxo3);
+			}
+			else
+			{
+				if (bf[3] != 0) output_low(auxo3);
+				else output_high(auxo3);
+			}
+		}
+		else 
+		if (bit_test(bf[2], 3))			//aux out 4
+		{
+			if (st)
+			{
+				if (bf[3] == 0) output_low(auxo4);
+				else output_high(auxo2);
+			}
+			else
+			{
+				if (bf[3] != 0) output_low(auxo4);
+				else output_high(auxo2);
+			}
+		}
+	}
 }
 //---------------------------------------------------------------------------
 //ioinit()  
@@ -3756,16 +3881,16 @@ long addr;
 	addr = make16(rxdat[3], rxdat[4]);
 	if (addr > MAXCARD) return false;
 /*	if (input(_RAND))			//if not random
-		{
+	{
 		rxdat[4] = 200;
 		writeb_ext_eeprom(addr, &rxdat[4]);
-		}
+	}
 	else
-		{
+	{
 		rxdat[4] = 210;
 		addr *= (long)CRDSIZER;
 		writeb_spi_eeprom(addr, &rxdat[4]);
-		}*/
+	}*/
 	return true;
 }
 //---------------------------------------------------------------------
@@ -3788,7 +3913,7 @@ char n;
 	tbuf[10] = 0;		//
 //Card Format, Mag or Wiegand
 	if (!cf)
-		{
+	{
 		tbuf[11] = 0;		//mag format
 		tbuf[12] = 10;		//10 digits
 		tbuf[13] = 13;		//even parity
@@ -3799,9 +3924,9 @@ char n;
 		tbuf[18] = 6;		//card location
 		tbuf[19] = 0;		//site high byte
 		tbuf[20] = 1;		//site low byte
-		}
+	}
 	else
-		{
+	{
 		tbuf[11] = 1;		//wieg format
 		tbuf[12] = 26;		//26 bits
 		tbuf[13] = 13;		//even parity
@@ -3812,7 +3937,7 @@ char n;
 		tbuf[18] = 9;		//card location
 		tbuf[19] = 0;		//site high byte
 		tbuf[20] = 1;		//site low byte
-		}
+	}
 	tbuf[21] = 0;		//apb mode (off)
 	tbuf[22] = 0;		//rdr1 atb
 	tbuf[23] = 0;		//rdr2 atb
@@ -3852,10 +3977,10 @@ char x;
 	if (evt.mon == 2) return;	//if february
 	drtc += 28;
 	if (evt.mon == 3)	//if March
-		{
+	{
 		if ((evt.year & 0x03) == 0) ++drtc;	//leap year
 		return;
-		}
+	}
 	drtc += 31;
 	if (evt.mon == 4) return;	//if April
 	drtc += 30;
@@ -3882,12 +4007,12 @@ char chkpin(char *pdat)
 char x;
 
 	if (pinlen == 6)
-		{
+	{
 		x = (crdst.pin.b[2] >> 4) + 0x30;
 		if (*pdat++ != x) return 0;
 		x = (crdst.pin.b[2] & 0x0F) + 0x30;
 		if (*pdat++ != x) return 0;
-		}
+	}
 	x = (crdst.pin.b[1] >> 4) + 0x30;
 	if (*pdat++ != x) return 0;
 	x = (crdst.pin.b[1] & 0x0F) + 0x30;
@@ -3908,114 +4033,120 @@ char md, dt;
 	if (crdst.data & 0x02) return 1;	//passback
 	apb = read_ext_eeprom(MEM, APBMODE);	//apb mode?
 	if (apb == 1)					//anti-passback?
-		{
+	{
 		addr = crdst.index >> 2;
 		md = crdst.index % 4;
 		dt = read_ext_eeprom(MEM, addr);
 		if (rdr == 1)				//reader 1
-			{
+		{
 			if (md == 0)
-				{
+			{
 				if (dt & 0x01)		//rdr1 last?
-					{
+				{
 					return 0;
-					}
+				}
 				else
-					{
+				{
 					dt |= 0x01;		//disable rdr1
 					dt &= 0xFD;		//enable rdr2
-					}
 				}
-			else if (md == 1)
-				{
+			}
+			else 
+			if (md == 1)
+			{
 				if (dt & 0x04)		//rdr1 last?
-					{
+				{
 					return 0;
-					}
+				}
 				else				//rdr2 last
-					{
+				{
 					dt |= 0x04;		//disable rdr1
 					dt &= 0xF7;		//enable rdr2
-					}
 				}
-			else if (md == 2)
-				{
+			}
+			else 
+			if (md == 2)
+			{
 				if (dt & 0x10)		//rdr1 last?
-					{
+				{
 					return 0;
-					}
+				}
 				else				//rdr2 last
-					{
+				{
 					dt |= 0x10;		//disable rdr1
 					dt &= 0xDF;		//enable rdr2
-					}
 				}
-			else if (md == 3)
-				{
+			}
+			else 
+			if (md == 3)
+			{
 				if (dt & 0x40)		//rdr1 last?
-					{
+				{
 					return 0;
-					}
+				}
 				else				//rdr2 last
-					{
+				{
 					dt |= 0x40;		//disable rdr1
 					dt &= 0x7F;		//enable rdr2
-					}
 				}
 			}
+		}
 		else						//reader 2
-			{
+		{
 			if (md == 0)
-				{
+			{
 				if (dt & 0x02)		//rdr2 last?
-					{
+				{
 					return 0;
-					}
+				}
 				else
-					{
+				{
 					dt |= 0x02;		//disable rdr2
 					dt &= 0xFE;		//enable rdr1
-					}
-				}
-			else if (md == 1)
-				{
-				if (dt & 0x08)		//rdr2 last?
-					{
-					return 0;
-					}
-				else				//rdr1 last
-					{
-					dt |= 0x08;		//disable rdr2
-					dt &= 0xFB;		//enable rdr1
-					}
-				}
-			else if (md == 2)
-				{
-				if (dt & 0x20)		//rdr2 last?
-					{
-					return 0;
-					}
-				else				//rdr1 last
-					{
-					dt |= 0x20;		//disable rdr2
-					dt &= 0xEF;		//enable rdr1
-					}
-				}
-			else if (md == 3)
-				{
-				if (dt & 0x80)		//rdr2 last?
-					{
-					return 0;
-					}
-				else				//rdr1 last
-					{
-					dt |= 0x80;		//disable rdr2
-					dt &= 0xBF;		//enable rdr1
-					}
 				}
 			}
-		write_ext_eeprom(MEM, addr, dt);
+			else 
+			if (md == 1)
+			{
+				if (dt & 0x08)		//rdr2 last?
+				{
+					return 0;
+				}
+				else				//rdr1 last
+				{
+					dt |= 0x08;		//disable rdr2
+					dt &= 0xFB;		//enable rdr1
+				}
+			}
+			else 
+			if (md == 2)
+			{
+				if (dt & 0x20)		//rdr2 last?
+				{
+					return 0;
+				}
+				else				//rdr1 last
+				{
+					dt |= 0x20;		//disable rdr2
+					dt &= 0xEF;		//enable rdr1
+				}
+			}
+			else 
+			if (md == 3)
+			{
+				if (dt & 0x80)		//rdr2 last?
+				{
+					return 0;
+				}
+				else				//rdr1 last
+				{
+					dt |= 0x80;		//disable rdr2
+					dt &= 0xBF;		//enable rdr1
+				}
+			}
 		}
+		write_ext_eeprom(MEM, addr, dt);
+	}
 	return 1;		//OK
 }
 //---------------------------------------------------------------------
@@ -4028,20 +4159,22 @@ int32 tsec;
 	tsec += (int32)bcd2hex(evt.min) * (int32)60;
 	tsec += (int32)bcd2hex(evt.sec);
 	if (rdr == 1)
-		{
+	{
 		if (lastcard1.card == 0x00000000)
-			{
+		{
 			lastcard1.card = evt.card.w;
 			lastcard1.sec = tsec;
 			return 0;
-			}
-		else if (lastcard1.card == evt.card.w)
-			{
+		}
+		else 
+		if (lastcard1.card == evt.card.w)
+		{
 			lastcard1.sec = tsec;
 			return 0;
-			}
-		else if ((tsec - lastcard1.sec) < buddytime)
-			{
+		}
+		else 
+		if ((tsec - lastcard1.sec) < buddytime)
+		{
 			tsec = evt.card.w;		//save current card
 			evt.card.w = lastcard1.card;
 			evt.evt = E1_ACC;
@@ -4049,30 +4182,32 @@ int32 tsec;
 			evt.card.w = tsec;
 			lastcard1.card = 0x00000000;
 			return 1;
-			}
+		}
 		else
-			{
+		{
 			lastcard1.card = 0x00000000;
 			lastcard1.sec = tsec;
 			return 0;
-			}
-//		return 0;
 		}
-	else if (rdr == 2)
-		{
+	}
+	else 
+	if (rdr == 2)
+	{
 		if (lastcard2.card == 0x00000000)
-			{
+		{
 			lastcard2.card = evt.card.w;
 			lastcard2.sec = tsec;
 			return 0;
-			}
-		else if (lastcard2.card == evt.card.w)
-			{
+		}
+		else 
+		if (lastcard2.card == evt.card.w)
+		{
 			lastcard2.sec = tsec;
 			return 0;
-			}
-		else if ((tsec - lastcard2.sec) < buddytime)
-			{
+		}
+		else 
+		if ((tsec - lastcard2.sec) < buddytime)
+		{
 			tsec = evt.card.w;		//save current card
 			evt.card.w = lastcard2.card;
 			evt.evt = E2_ACC;
@@ -4080,15 +4215,14 @@ int32 tsec;
 			evt.card.w = tsec;
 			lastcard2.card = 0x00000000;
 			return 1;
-			}
+		}
 		else
-			{
+		{
 			lastcard2.card = 0x00000000;
 			lastcard2.sec = tsec;
 			return 0;
-			}
-//		return 0;
 		}
+	}
 	return 0;				
 }
 //---------------------------------------------------------------------
@@ -4099,10 +4233,10 @@ unsigned char x, bf[4];
 
 	x = read_ext_eeprom(MEM, PASSH);
 	if (x == rxdat[3])
-		{
+	{
 		x = read_ext_eeprom(MEM, PASSL);
 		if (x == rxdat[4])
-			{
+		{
 			output_high(txon);
 			delay_us(50);
 			putchar(0x06);
@@ -4113,8 +4247,8 @@ unsigned char x, bf[4];
 			bf[1] = node;
 			write_program_memory(0x200000, bf, 2);
 			reset_cpu();
-			}
 		}
+	}
 	output_high(txon);
 	delay_us(50);
 	putchar(0x15);
@@ -4130,39 +4264,41 @@ void ToggleDoor(unsigned char dr)
 	LEDcnt = 1;						//begin LEDflash with LED on
 	LEDstop = LEDcnt + 5;			//run through LEDflash so 2 flashes
 	if (dr == 1)					//if door 1
-		{
+	{
 		LEDflash = 1;
 		if (dr1stat == DOOR_SOP)
-			{
+		{
 			output_low(relay1);		//relay1 off
 			LEDcnt = 2;				//begin LEDflash with LED off
 			dr1stat = DOOR_NO;		//set normal
 			evt.evt = E1_LATC;
-			}
-		else if (dr1stat != DOOR_TZOP)
-			{
+		}
+		else 
+		if (dr1stat != DOOR_TZOP)
+		{
 			dr1stat = DOOR_SOP;		//set open
 			output_high(relay1);	//relay1 on
 			evt.evt = E1_LATO;
-			}
 		}
+	}
 	else							//assume door 2
-		{
+	{
 		LEDflash = 2;
 		if (dr2stat == DOOR_SOP)
-			{
+		{
 			output_low(relay2);		//relay2 off
 			LEDcnt = 2;				//begin LEDflash with LED off
 			dr2stat = DOOR_NO;		//set normal
 			evt.evt = E2_LATC;
-			}
-		else if (dr2stat != DOOR_TZOP)
-			{
+		}
+		else 
+		if (dr2stat != DOOR_TZOP)
+		{
 			dr2stat = DOOR_SOP;		//set open
 			output_high(relay2);	//relay2 on
 			evt.evt = E2_LATO;
-			}
 		}
+	}
 }
 //---------------------------------------------------------------------
 //---------------------------------------------------------------------
@@ -4173,7 +4309,7 @@ void rcount(void)		//Send relay counts to host
 	char bf[12];
 
 	for (rc=0; rc<2; rc++)
-		{
+	{
 		if (rc == 0) rnum = read_ext_eeprom(MEM, R1ACT);
 		else rnum = read_ext_eeprom(MEM, R2ACT);
 		bf[0] = (0x80  |node);
@@ -4181,22 +4317,74 @@ void rcount(void)		//Send relay counts to host
 		bf[2] = 0xf2;
 		bf[3] = rc;
 		for (x=4; x<12; x++)
-			{
+		{
 			cv = ((rnum >> (44 - (x*4))) & 0x0f);
 			if (cv < 0x0A) bf[x] = (0x30 + cv);
 			else bf[x] = (0x37 + cv);
-			}
+		}
 		delay_ms(1);
 		output_high(txon);					//RS485 = TX
 		delay_ms(TXDEL);
 		cs = 0;
 		for (x=0; x<12; x++)
-			{
+		{
 			putchar(bf[x]);
 			cs += bf[x];
-			}
+		}
 		putchar(cs);
 		while (!TRMT) restart_wdt();
 		output_low(txon);				//RS485 = RX
 	}
 }
+//--------------------------------------------------------------------- 
+//check_pin() 
+//Checks 4 digit pin against up to 10 stored pins 
+//--------------------------------------------------------------------- 
+//Process pin number 
+short check_pin(char *ps, char rdr) 
+{ 
+long xpin, pin_al, addr, tz;
+char n, y, pl, ph, pinvalid, *pn;
+
+	read_rtc();									//get current time
+	evt.card.w = atol(ps);
+	if (evt.card.w == 0) return 0;
+	xpin = PIN1_L;
+	pinvalid = 0;
+	for (n = 0; n < 10; n++)
+	{
+		pn = &evt.card.w;
+		y = read_ext_eeprom(MEM, xpin++);
+		if (y == *pn++)
+		{
+			y = read_ext_eeprom(MEM, xpin++);
+			pinvalid = 2;
+			if (y == *pn)
+			{
+				pin_al = read_ext_eeprom(MEM, (xpin + (18 - n)));
+				if (rdr == 1) addr = ACC0 + (ACCSIZE * pin_al); 				//locate accesslevel 
+				else if (rdr == 2) addr = ACC0 + (ACCSIZE * pin_al) + 2; 
+				ph = read_ext_eeprom(MEM, addr++);								//high byte 
+				pl = read_ext_eeprom(MEM, addr);								//low byte 
+				if ((pl == 0) && (ph == 0)) return pinvalid;					//no timezone 
+				if (bit_test(pl, 0)) pinvalid = 1;								//tz always = bit 0 
+				if (pinvalid == 2)												//tz is 2 or greater
+				{
+					tz = TZ2;													//point to tz2 
+					for (n = 1; n < 8; n++)										//1st 7 user timezones 
+					{ 
+						if ((bit_test(pl, n)) && (tz_check(tz))) pinvalid = 1;	//timezone valid 
+						tz += TZSIZE;											//point to next tz 
+					} 
+					for (n = 0; n < 8; n++)										//next 8 timezones 
+					{ 
+						if ((bit_test(ph, n)) && (tz_check(tz))) pinvalid = 1;	//timezone valid 
+						tz += TZSIZE;											//point to next tz 
+					} 
+				}
+			}
+		}
+		else ++xpin;
+	}
+	return pinvalid;
+} 
