@@ -43,10 +43,12 @@
 //							 Door open timezone now always unlocks regardless of door state
 //							 Fixed door 1 left open state failing to report door closed
 //Version: 2.14 - 27/06/13 - PIN only functionality added - with access levels
+//Version: 2.15 - 18/07/13 - Fixed card/REX while DOOR_RELOP resetting door alarm timer
+//							 Fixed PIN on rdr2 causing green LED on rdr1 remaining lit
 
 #include <18F6722.H>
 
-#define	ONEDOOR
+//#define	ONEDOOR
 
 #if defined(ONEDOOR)
 #define MODVER 5
@@ -100,7 +102,7 @@
 
 
 #define major_ver	0x02			//software version
-#define minor_ver	14
+#define minor_ver	15
 
 #use delay(clock=40000000, RESTART_WDT)
 #use rs232(baud = 9600, xmit = PIN_C6, rcv = PIN_C7, RESTART_WDT, ERRORS)
@@ -1444,43 +1446,45 @@ while (true)
 									}		
 								}
 								else								//2 door
-								if (crcflags & 0x04)				//buddy mode?
 								{
-									if (!buddycheck(2)) evt.evt = E2_BUD;
-								}
-								if (evt.evt == E2_ACC)
-								{
-									latchrly2 = 0x00;
-									if (readtimer2 < latchtime && evt.card.w == lastread2) //re-present of a card within time
+									if (crcflags & 0x04)				//buddy mode?
 									{
-										evt.evt = 0x00;				//no need for multiple 'Granted'
-										switch (readcount2)
+										if (!buddycheck(2)) evt.evt = E2_BUD;
+									}
+									if (evt.evt == E2_ACC)
+									{
+										latchrly2 = 0x00;
+										if (readtimer2 < latchtime && evt.card.w == lastread2) //re-present of a card within time
 										{
-											case SECONDREAD2:
-												lastread2 = evt.card.w;
-												readcount2++;
-												break;
-											case THIRDREAD2:
-												lastread2 = 0x00000000;
-												readcount2 = 0x00;
-												latchrly2 = 0x01;
-												break;
+											evt.evt = 0x00;				//no need for multiple 'Granted'
+											switch (readcount2)
+											{
+												case SECONDREAD2:
+													lastread2 = evt.card.w;
+													readcount2++;
+													break;
+												case THIRDREAD2:
+													lastread2 = 0x00000000;
+													readcount2 = 0x00;
+													latchrly2 = 0x01;
+													break;
+											}
 										}
+										else  							//different to previous read
+										{
+											readcount2 = 0x01;
+											lastread2 = evt.card.w;
+										}
+										readtimer2 = 0;	//reset counter
+										relay_on(2, 0);
+										if (drmon2 !=0)
+										{
+											if (!input(door2)) output_low(auxo2);				//if door closed turn local alarm off
+											else if ((crcflags & 0x08) == 0x00) evt.evt = 0x00;	//door is open - if not muster controller do not report
+										}
+										if ((dr2stat == DOOR_SOP) && ((crcflags & 0x08) == 0x00)) evt.evt = 0x00; //copes with no door monitoring and toggledoor
+										if ((crdst.data & 0x01) && (latchrly2 == 0x01))	ToggleDoor(2);
 									}
-									else  							//different to previous read
-									{
-										readcount2 = 0x01;
-										lastread2 = evt.card.w;
-									}
-									readtimer2 = 0;	//reset counter
-									relay_on(2, 0);
-									if (drmon2 !=0)
-									{
-										if (!input(door2)) output_low(auxo2);				//if door closed turn local alarm off
-										else if ((crcflags & 0x08) == 0x00) evt.evt = 0x00;	//door is open - if not muster controller do not report
-									}
-									if ((dr2stat == DOOR_SOP) && ((crcflags & 0x08) == 0x00)) evt.evt = 0x00; //copes with no door monitoring and toggledoor
-									if ((crdst.data & 0x01) && (latchrly2 == 0x01))	ToggleDoor(2);
 								}
 							}
 							else 
@@ -1542,7 +1546,7 @@ while (true)
 				else 
 				if (++pin2cnt == 0x04)
 				{
-					if (pinlist == 0x00)				//Not in list of 10 stored PIN - wait for card
+					if (pinlen == 0x04)
 					{
 						pin2tick = 60;					//3 secs to present card
 						pin2stat = PIN_RDY;
@@ -1564,8 +1568,16 @@ while (true)
 						else 
 						if (pinlist == 0x01)			//PIN is in list of 10 stored PINs and acc lev valid
 						{
-							relay_on(2, 0);				//relay 2 on
-							dr2stat = DOOR_REL;			//door released
+							if (crcflags & 0x02)		//if single door
+							{
+								relay_on(1, 0);			//relay 1 on
+								dr1stat = DOOR_REL;			//door released
+							}
+							else
+							{
+								relay_on(2, 0);			//relay 2 on
+								dr2stat = DOOR_REL;			//door released
+							}
 							evt.evt = E2_APINOK;	
 							pin2stat = PIN_NO;
 						}
@@ -2956,9 +2968,12 @@ char x;
 		r1tout = false;
 		if (drmon1 != 0)								//if door monitoring
 		{
-			dr1tick = x * 2 + 2;
 			dr1tout = false;
-			if (dr1stat == DOOR_NO) dr1stat = DOOR_REL;
+			if (dr1stat == DOOR_NO) 
+			{
+				dr1tick = x * 2 + 2;
+				dr1stat = DOOR_REL;
+			}
 		}
 	}
 	else 
@@ -2986,9 +3001,12 @@ char x;
 		r2tout = false;
 		if (drmon2 != 0)								//if door monitoring
 		{
-			dr2tick = x * 2 + 2;
 			dr2tout = false;
-			if (dr2stat == DOOR_NO) dr2stat = DOOR_REL;
+			if (dr2stat == DOOR_NO) 
+			{
+				dr2tick = x * 2 + 2;
+				dr2stat = DOOR_REL;
+			}
 		}
 	}
 }
