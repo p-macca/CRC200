@@ -37,7 +37,7 @@
 //							 Fixed latching open when not armed
 //							 Door open timezone now closes a door set/latched open
 //Version: 2.13 - 02/10/12 - Toggledoor LED flash moved to inside timer1
-//							 Relay activation counts added (command 0xf2)
+//							 Relay activation counts added (command 0xf2) - this version is no good. 2.16 fixes
 //							 Default settings applied on initial power up
 //							 Accomodation cards added
 //							 Door open timezone now always unlocks regardless of door state
@@ -45,6 +45,7 @@
 //Version: 2.14 - 27/06/13 - PIN only functionality added - with access levels
 //Version: 2.15 - 18/07/13 - Fixed card/REX while DOOR_RELOP resetting door alarm timer
 //							 Fixed PIN on rdr2 causing green LED on rdr1 remaining lit
+//Version: 2.16 - xx/xx/xx - Fixed relay counts not storing larger numbers
 
 #include <18F6722.H>
 
@@ -162,7 +163,7 @@
 #define	txon	PIN_E7	      	//RS485 tx on
 
 
-#define	SDOOR	PIN_F6			//single door
+//#define	SDOOR	PIN_F6			//single door
 //#define	wieg	PIN_F7		//sw8 wiegand if on
 
 #define	KCARD	0x00			//aborted due to card
@@ -714,6 +715,7 @@ char LEDflash, LEDcnt, LEDcntloop, LEDstop;
 float LEDcntfp;
 void rcount(void);
 char dr1atg, dr2atg;
+void rcountsave(char i);
 
 //---------------------------------------------------------------------
 //Timer 1 interrupt routine (52mS)
@@ -1035,7 +1037,8 @@ void serial_isr(void)
 //---------------------------------------------------------------------
 void main(void)
 {
-char c, x;
+char c, x, n;
+int32 rcx;
 static char oldmin, oldio;
 
 #use fast_io(A)
@@ -1115,12 +1118,23 @@ static char oldmin, oldio;
 	if (read_ext_eeprom(MEM, FIRSTUSE) != 0x101010)
 	{
 		set_defaults(1);
-		write_ext_eeprom(MEM, R1ACT, 0x00);		//Zero relay 1 activation count
-		write_ext_eeprom(MEM, R2ACT, 0x00);		//Zero relay 2 activation count
+		rcountsave(0);							//ensure relay counts are 0
 		write_ext_eeprom(MEM, FIRSTUSE, 0x101010);
 	}	
-	r1count = read_ext_eeprom(MEM, R1ACT);		//read relay activation counters
-	r2count = read_ext_eeprom(MEM, R2ACT);
+ 
+//read relay activation counters
+	r1count = 0;
+	for (n = 0; n < 3; n++)
+	{
+		rcx = read_ext_eeprom(MEM, (R1ACT + n));	
+		r1count = r1count + (rcx <<= (n*8));
+	}
+	r2count = 0;
+	for (n = 0; n < 3; n++)
+	{
+		rcx = read_ext_eeprom(MEM, (R2ACT + n));	
+		r2count = r2count + (rcx <<= (n*8));
+	}
 
 	if (!input(PIN_F5))							//DIP SW6 - Perform Reset to defaults
 	{
@@ -2815,7 +2829,7 @@ short ok;
 						{
 							dr1stat = DOOR_SOP;		//set open
 							r1count++;
-							write_ext_eeprom(MEM, R1ACT, r1count);			//increment relay count
+							rcountsave(1);									//increment relay count
 							output_high(relay1);	//relay1 on
 							output_high(gled1);		//green led1 on
 							if (crcflags & 0x02) output_high(gled2);
@@ -2840,7 +2854,7 @@ short ok;
 						{
 							dr2stat = DOOR_SOP;		//set open
 							r2count++;
-							write_ext_eeprom(MEM, R2ACT, r2count);			//increment relay count
+							rcountsave(2);									//increment relay count
 							output_high(relay2);	//relay2 on
 							output_high(gled2);		//green led2 on
 						}
@@ -2942,15 +2956,14 @@ short ok;
 //---------------------------------------------------------------------------
 void relay_on(char rly, char tm)
 {
-char x;
-
+	char x;
 	if (rly == 1)
 	{
-		if (dr1stat == DOOR_NO)
-		{
+		if (dr1stat == DOOR_NO)							//don't count non relay fires
+		{												//an already open door won't fire relay
 			r1count++;
-			write_ext_eeprom(MEM, R1ACT, r1count);			//increment relay count
-		}	
+			rcountsave(1);
+		}
 		output_high(relay1);							//relay 1 on
 		output_high(gled1);								//green led on
 		if (crcflags & 0x02) output_high(gled2);		//if single door
@@ -2977,12 +2990,11 @@ char x;
 		}
 	}
 	else 
-	if (rly == 2)
 	{
-		if (dr2stat == DOOR_NO)
-		{
+		if (dr2stat == DOOR_NO)							//don't count non relay fires
+		{												//an already open door won't fire relay
 			r2count++;
-			write_ext_eeprom(MEM, R2ACT, r2count);			//increment relay count
+			rcountsave(2);
 		}
 		output_high(relay2);							//relay 2 on
 		output_high(gled2);								//green led on
@@ -3010,6 +3022,7 @@ char x;
 		}
 	}
 }
+
 //---------------------------------------------------------------------------
 //powerup_check()
 //Create a power up event.
@@ -3086,12 +3099,12 @@ unsigned long tz;
 updz1:
 		if (op == 1)
 		{
-			if ((dr1stat != DOOR_TZOP))		//if not already open on TZ
+			if ((dr1stat != DOOR_TZOP))			//if not already open on TZ
 			{							
 				r1count++;
-				write_ext_eeprom(MEM, R1ACT, r1count);			//increment relay count
-				output_high(relay1);		//relay 1 on
-				output_high(gled1);			//green led 1 on
+				rcountsave(1);					//increment relay count
+				output_high(relay1);			//relay 1 on
+				output_high(gled1);				//green led 1 on
 				if (crcflags & 0x02) output_high(gled2);
 				evt.card.w = 0;
 				evt.evt = E1_OPTZ;			//dr1 opened
@@ -3161,7 +3174,7 @@ updz2:
 			if ((dr2stat != DOOR_TZOP))		//if not already open on TZ
 			{							
 				r2count++;
-				write_ext_eeprom(MEM, R2ACT, r2count);			//increment relay count
+				rcountsave(2);									//increment relay count
 				output_high(relay2);		//relay 2 on
 				output_high(gled2);			//green led 2 on
 				evt.card.w = 0;
@@ -4320,7 +4333,7 @@ void ToggleDoor(unsigned char dr)
 }
 //---------------------------------------------------------------------
 //---------------------------------------------------------------------
-void rcount(void)		//Send relay counts to host
+void rcount(void)					//Send relay counts to host
 {
 	int32 rnum;
 	char cs, x, cv, rc;
@@ -4328,8 +4341,9 @@ void rcount(void)		//Send relay counts to host
 
 	for (rc=0; rc<2; rc++)
 	{
-		if (rc == 0) rnum = read_ext_eeprom(MEM, R1ACT);
-		else rnum = read_ext_eeprom(MEM, R2ACT);
+		if (rc == 0) rnum = r1count;
+		else rnum = r2count;
+
 		bf[0] = (0x80  |node);
 		bf[1] = 0x0a;
 		bf[2] = 0xf2;
@@ -4341,7 +4355,7 @@ void rcount(void)		//Send relay counts to host
 			else bf[x] = (0x37 + cv);
 		}
 		delay_ms(1);
-		output_high(txon);					//RS485 = TX
+		output_high(txon);				//RS485 = TX
 		delay_ms(TXDEL);
 		cs = 0;
 		for (x=0; x<12; x++)
@@ -4354,6 +4368,30 @@ void rcount(void)		//Send relay counts to host
 		output_low(txon);				//RS485 = RX
 	}
 }
+//---------------------------------------------------------------------
+void rcountsave (char relay)
+{
+	char x, rc1;
+	int32 rcmem;
+	int16 ract;
+	if (relay == 0)	for (x = 0; x < 6; x++)	write_ext_eeprom(MEM, (R1ACT + x), 0x00);	//clear stored counts
+	else 
+	{
+		rcmem = r1count;				//Allocate relay 1 values
+		ract = R1ACT;
+		if (relay == 2)					//change values if relay 2
+		{
+			rcmem = r2count;
+			ract = R2ACT;
+		}
+		for (x = 0; x < 3; x++)			//write counts to mem
+		{
+			rc1 = rcmem & 0xff;
+			write_ext_eeprom(MEM, (ract + x), rc1);
+			rcmem >>= 8;
+		}
+	}	
+}
 //--------------------------------------------------------------------- 
 //check_pin() 
 //Checks 4 digit pin against up to 10 stored pins 
@@ -4361,9 +4399,8 @@ void rcount(void)		//Send relay counts to host
 //Process pin number 
 short check_pin(char *ps, char rdr) 
 { 
-long xpin, pin_al, addr, tz;
-char n, y, pl, ph, pinvalid, *pn;
-
+	long xpin, pin_al, addr, tz;
+	char n, y, pl, ph, pinvalid, *pn;
 	read_rtc();									//get current time
 	evt.card.w = atol(ps);
 	if (evt.card.w == 0) return 0;
